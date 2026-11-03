@@ -349,16 +349,38 @@ function handleFocusSnapshot(snapshot) {
   activeRequest?.abort();
   const revision = ++monitorRevision;
   lastMonitorKey = snapshot.key;
-  assistantWindow?.hide();
   pendingSelection = { text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true };
   currentResult = '';
   state.monitorStatus = trimmedText.length < 3 ? 'Type at least 3 characters to get suggestions' : 'Checking after you pause…';
-  if (assistantWindow?.isVisible()) assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Waiting for you to pause…' });
+  assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Waiting for you to pause…' });
   publishState();
   if (trimmedText.length < 3) return;
+  void showMonitorPanel(snapshot, revision);
   monitorTimer = setTimeout(async () => {
     await requestMonitorProofread(snapshot, revision);
-  }, 1200);
+  }, 700);
+}
+
+async function showMonitorPanel(snapshot, revision) {
+  try {
+    await createAssistantWindow();
+    if (revision !== monitorRevision || !pendingSelection?.monitor) return;
+    const alreadyVisible = assistantWindow.isVisible();
+    if (!alreadyVisible) {
+      const position = assistantPosition(snapshot);
+      assistantWindow.setPosition(position.x, position.y);
+      assistantWindow.setAlwaysOnTop(true);
+      assistantWindow.showInactive();
+      assistantWindow.moveTop();
+    }
+    assistantState('waiting', { action: snapshot.text.trim().length < 3 ? 'Type at least 3 characters…' : 'Waiting for you to pause…' });
+    if (!alreadyVisible) void raiseWindowWithoutFocus(assistantNativeHandle()).catch(() => {});
+  } catch (error) {
+    if (revision === monitorRevision) {
+      state.monitorStatus = error.message || 'Could not show the suggestion panel';
+      publishState();
+    }
+  }
 }
 
 async function requestMonitorProofread(snapshot, revision) {
@@ -375,9 +397,6 @@ async function requestMonitorProofread(snapshot, revision) {
   try {
     await createAssistantWindow();
     if (revision !== monitorRevision) return;
-    const position = assistantPosition(snapshot);
-    assistantWindow.setPosition(position.x, position.y);
-    assistantWindow.setAlwaysOnTop(true);
     if (revision === monitorRevision) await transform('correct');
   } catch (error) {
     if (revision !== monitorRevision) return;
@@ -574,7 +593,7 @@ async function transform(action) {
     assistantState('done', { action: actions[action].label, replyOnly: action === 'reply', unchanged: currentResult === selection.text });
     if (selection.monitor && currentResult === selection.text) {
       state.monitorStatus = 'No correction needed';
-      assistantWindow?.hide();
+      assistantState('done', { action: 'No correction needed', unchanged: true });
       publishState();
       return;
     }

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;">
+  <title>ClearWrite</title>
+  <link rel="stylesheet" href="./app.css">
+  <script defer src="./assistant.js"></script>
+</head>
+<body class="assistant-page">
+  <main class="popover">
+    <header class="popover-header"><div class="brand-mini"><span class="brand-mark small">CW</span><strong>ClearWrite</strong><span class="assistant-dot" id="assistant-dot" title="ChatGPT connection"></span></div><button class="close-button" id="close-button" title="Close">×</button></header>
+    <div class="selected-label"><span id="source-label">YOUR SELECTION</span><span class="selection-counter" id="selection-counter"></span></div>
+    <div class="selected-text" id="selected-text"></div>
+    <section class="actions" id="actions">
+      <div class="action-group"><div class="action-group-title">FIX</div><button class="action-primary" data-action="correct"><span class="action-bullet bullet-coral">A</span><span><b>Correct writing</b><small>Spelling, grammar, punctuation</small></span><span class="action-chevron">→</span></button></div>
+      <div class="action-group"><div class="action-group-title">REWRITE</div><div class="action-grid-small"><button data-action="clearer"><b>Clearer</b><small>Improve flow</small></button><button data-action="professional"><b>Professional</b><small>Polish the tone</small></button><button data-action="friendly"><b>Friendly</b><small>Sound more natural</small></button><button data-action="continue"><b>Continue</b><small>Finish the thought</small></button></div></div>
+      <div class="action-group"><div class="action-group-title">CONVERSATION</div><button class="action-primary" data-action="reply"><span class="action-bullet bullet-blue">R</span><span><b>Suggest a reply</b><small>Draft from the selected message</small></span><span class="action-chevron">→</span></button></div>
+    </section>
+    <section class="result-section hidden" id="result-section">
+      <div class="result-heading"><strong id="result-title">Suggestion</strong><span id="result-state"></span></div>
+      <div class="changes-section hidden" id="changes-section" aria-label="Text changes">
+        <div class="change-column"><span>Your text</span><div id="original-diff"></div></div>
+        <div class="change-column"><span>Correction</span><div id="corrected-diff"></div></div>
+      </div>
+      <textarea id="result-text" spellcheck="true" aria-label="AI suggestion"></textarea>
+      <div class="result-actions"><button class="secondary" id="copy-button">Copy</button><button class="primary" id="replace-button">Replace selected text</button></div>
+      <button class="tiny-link try-again" id="back-button">Try another action</button>
+    </section>
+    <div class="working-row hidden" id="working-row"><span class="spinner"></span><span id="working-label">Thinking...</span><button class="tiny-link" id="cancel-button">Cancel</button></div>
+    <p class="inline-error" id="inline-error" role="alert"></p>
+    <footer class="popover-footer"><span><i></i><span id="provider-label">Sent to your selected provider only after your choice</span></span><button class="tiny-link" id="open-app">Open app</button></footer>
+  </main>
+</body>
+</html>

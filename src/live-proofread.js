@@ -13,5 +13,20 @@ export function isReadyForLiveProofread(value) {
 }
 
 export function isUserEditSnapshot(snapshot) {
-  return snapshot?.active === true && snapshot.changed === true && snapshot.readOnly !== true;
+  return snapshot?.active === true && snapshot.changed === true &&
+    snapshot.editable === true && snapshot.readOnly === false;
+}
+
+export function appendContinuation(original, continuation) {
+  const next = continuation.trim();
+  if (!next || !original) return original + next;
+  if (next.startsWith(original)) return next;
+  if (/\s$/.test(original) || /^[,.;:!?)}\]]/.test(next)) return original + next;
+  return `${original} ${next}`;
+}
+
+export function preserveOuterWhitespace(original, corrected) {
+  const leading = original.match(/^\s*/u)?.[0] || '';
+  const trailing = original.match(/\s*$/u)?.[0] || '';
+  return `${leading}${corrected.trim()}${trailing}`;
 }

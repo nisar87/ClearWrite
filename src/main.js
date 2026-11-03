@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, safeStorage, screen, shell, Tray } from 'electron';
 import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
-import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, isUserEditSnapshot } from './live-proofread.js';
+import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, isUserEditSnapshot, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -12,6 +12,7 @@ import { captureSelection, pasteToWindow, raiseWindowWithoutFocus, replaceFieldI
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || path.resolve(root, '..', 'data');
 const startupLog = path.join(dataDir, 'startup.log');
+const defaultExcludedApps = ['cmd', 'powershell', 'pwsh', 'windowsterminal', 'wt', 'regedit'];
 function startup(message) { void appendFile(startupLog, `${new Date().toISOString()} ${message}\n`).catch(() => {}); }
 app.setName('ClearWrite');
 app.setPath('userData', dataDir);
@@ -29,6 +30,7 @@ let monitorInactiveTimer;
 let monitorRevision = 0;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
+let appliedMonitorSnapshot;
 let pendingSelection;
 let currentResult = '';
 let geminiApiKey = '';
@@ -44,8 +46,10 @@ let state = {
   geminiError: '',
   shortcut: 'CommandOrControl+Shift+Space',
   notice: '',
-  monitorEnabled: true,
-  monitorStatus: 'starting',
+  monitorEnabled: false,
+  startupEnabled: false,
+  excludedApps: [],
+  monitorStatus: 'Monitoring paused',
 };
 
 const chatgpt = createChatGPT({
@@ -68,14 +72,19 @@ const chatgpt = createChatGPT({
 });
 
 function readClipboardSnapshot() {
-  return clipboard.availableFormats().flatMap((format) => {
-    try { return [[format, clipboard.readBuffer(format)]]; } catch { return []; }
-  });
+  const formats = clipboard.availableFormats();
+  const snapshot = {};
+  try { if (formats.includes('text/plain')) snapshot.text = clipboard.readText(); } catch { }
+  try { if (formats.includes('text/html')) snapshot.html = clipboard.readHTML(); } catch { }
+  try { if (formats.includes('text/rtf')) snapshot.rtf = clipboard.readRTF(); } catch { }
+  try { if (formats.some((format) => format.startsWith('image/'))) snapshot.image = clipboard.readImage(); } catch { }
+  if (formats.length === 0) return null;
+  return snapshot;
 }
 
 function restoreClipboard(snapshot) {
-  clipboard.clear();
-  for (const [format, data] of snapshot) clipboard.writeBuffer(format, data);
+  if (!snapshot || !Object.keys(snapshot).length) clipboard.clear();
+  else clipboard.write(snapshot);
 }
 
 function publishState() {
@@ -173,7 +182,13 @@ async function createAssistantWindow() {
   });
   monitorWindow(assistantWindow, 'assistant');
   assistantWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  assistantWindow.on('blur', () => { if (!busy && !pendingSelection?.monitor) assistantWindow?.hide(); });
+  assistantWindow.on('blur', () => {
+    if (!busy && !pendingSelection?.monitor) {
+      assistantWindow?.hide();
+      pendingSelection = undefined;
+      currentResult = '';
+    }
+  });
   await assistantWindow.loadFile(path.resolve(root, '..', 'public', 'assistant.html'));
 }
 
@@ -266,11 +281,14 @@ function cancelMonitorWork(hide = true) {
 
 function handleFocusSnapshot(snapshot) {
   if (!state.monitorEnabled) return;
+  if (pendingSelection && !pendingSelection.monitor && assistantWindow?.isVisible()) return;
   if (!snapshot?.active) {
     clearTimeout(monitorTimer);
     monitorTimer = undefined;
-    activeRequest?.abort();
-    monitorRevision += 1;
+    if (pendingSelection?.monitor) {
+      activeRequest?.abort();
+      monitorRevision += 1;
+    }
     if (snapshot?.reason === 'password') {
       lastMonitorKey = '';
       cancelMonitorWork();
@@ -278,7 +296,7 @@ function handleFocusSnapshot(snapshot) {
       publishState();
       return;
     }
-    state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Reading field; suggestions wait until you type' : 'Checking focus…';
+    state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Reading field; suggestions wait until you type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : 'Checking focus…';
     publishState();
     clearTimeout(monitorInactiveTimer);
     monitorInactiveTimer = setTimeout(() => {
@@ -289,7 +307,7 @@ function handleFocusSnapshot(snapshot) {
       }
       lastMonitorKey = '';
       cancelMonitorWork();
-      state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : 'Waiting for a text field';
+      state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : 'Waiting for a text field';
       publishState();
     }, 900);
     return;
@@ -299,20 +317,30 @@ function handleFocusSnapshot(snapshot) {
   const trimmedText = typeof snapshot.text === 'string' ? snapshot.text.trim() : '';
   if (typeof snapshot.text !== 'string' || snapshot.text.length > 6000) {
     clearTimeout(monitorTimer);
-    activeRequest?.abort();
+    if (pendingSelection?.monitor) activeRequest?.abort();
     monitorRevision += 1;
     state.monitorStatus = 'Field is too long to check';
     publishState();
     return;
   }
+  if (appliedMonitorSnapshot?.key === snapshot.key && appliedMonitorSnapshot?.text === snapshot.text) {
+    appliedMonitorSnapshot = undefined;
+    lastMonitorKey = snapshot.key;
+    state.monitorStatus = 'Correction applied';
+    publishState();
+    return;
+  }
+  appliedMonitorSnapshot = undefined;
   if (!isUserEditSnapshot(snapshot)) {
     clearTimeout(monitorTimer);
-    activeRequest?.abort();
+    if (pendingSelection?.monitor) {
+      activeRequest?.abort();
+      pendingSelection = undefined;
+      currentResult = '';
+      assistantWindow?.hide();
+    }
     monitorRevision += 1;
     lastMonitorKey = snapshot.key;
-    pendingSelection = undefined;
-    currentResult = '';
-    assistantWindow?.hide();
     state.monitorStatus = 'Waiting for you to type';
     publishState();
     return;
@@ -321,7 +349,8 @@ function handleFocusSnapshot(snapshot) {
   activeRequest?.abort();
   const revision = ++monitorRevision;
   lastMonitorKey = snapshot.key;
-  pendingSelection = { text: snapshot.text, target: snapshot.target, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true };
+  assistantWindow?.hide();
+  pendingSelection = { text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true };
   currentResult = '';
   state.monitorStatus = trimmedText.length < 3 ? 'Type at least 3 characters to get suggestions' : 'Checking after you pause…';
   if (assistantWindow?.isVisible()) assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Waiting for you to pause…' });
@@ -349,9 +378,6 @@ async function requestMonitorProofread(snapshot, revision) {
     const position = assistantPosition(snapshot);
     assistantWindow.setPosition(position.x, position.y);
     assistantWindow.setAlwaysOnTop(true);
-    assistantWindow.showInactive();
-    assistantWindow.moveTop();
-    await raiseWindowWithoutFocus(assistantNativeHandle());
     if (revision === monitorRevision) await transform('correct');
   } catch (error) {
     if (revision !== monitorRevision) return;
@@ -403,7 +429,7 @@ function startFocusMonitor() {
   const helperPath = path.join(root, 'focus-monitor.ps1');
   focusMonitor = spawn(process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : 'powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath,
-  ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CLEARWRITE_PID: String(process.pid) } });
+  ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CLEARWRITE_PID: String(process.pid), CLEARWRITE_EXCLUDED_PROCESSES: JSON.stringify([...defaultExcludedApps, ...state.excludedApps]) } });
   monitorLineBuffer = '';
   focusMonitor.stdout.setEncoding('utf8');
   focusMonitor.stdout.on('data', (chunk) => {
@@ -539,10 +565,19 @@ async function transform(action) {
       ? await streamGemini({ ...request, apiKey: geminiApiKey })
       : await chatgpt.streamResponse(request);
     if (controller.signal.aborted || pendingSelection !== selection) return;
-    currentResult = response.text.trim();
+    const output = response.text.trim();
+    currentResult = action === 'continue'
+      ? preserveOuterWhitespace(selection.text, appendContinuation(selection.text.trim(), output))
+      : preserveOuterWhitespace(selection.text, output);
     if (!currentResult) throw new Error(`${provider === 'gemini' ? 'Gemini' : 'ChatGPT'} returned an empty suggestion.`);
     if (selection.monitor) state.monitorStatus = currentResult === selection.text ? 'No correction needed' : 'Suggestion ready to review';
     assistantState('done', { action: actions[action].label, replyOnly: action === 'reply', unchanged: currentResult === selection.text });
+    if (selection.monitor && currentResult === selection.text) {
+      state.monitorStatus = 'No correction needed';
+      assistantWindow?.hide();
+      publishState();
+      return;
+    }
     if (selection.monitor) {
       assistantWindow?.setAlwaysOnTop(true);
       assistantWindow?.showInactive();
@@ -561,7 +596,7 @@ async function transform(action) {
       busy = false;
       activeRequest = undefined;
     }
-    await refreshState();
+    publishState();
   }
 }
 
@@ -610,7 +645,11 @@ async function copyResult() {
     state.monitorStatus = 'Suggestion copied';
     assistantState('done', { action: 'Copied', unchanged: currentResult === pendingSelection.text });
   }
-  else assistantWindow?.hide();
+  else {
+    assistantWindow?.hide();
+    pendingSelection = undefined;
+    currentResult = '';
+  }
   publishState();
 }
 
@@ -623,7 +662,7 @@ async function replaceSelection() {
   const snapshot = readClipboardSnapshot();
   try {
     clipboard.writeText(currentResult);
-    if (monitorMode) await replaceFieldInWindow(target);
+    if (monitorMode) await replaceFieldInWindow(target, pendingSelection.text, pendingSelection.runtimeId);
     else await pasteToWindow(target);
   } finally {
     const pastedText = currentResult;
@@ -631,20 +670,26 @@ async function replaceSelection() {
       if (clipboard.readText() === pastedText) {
         try { restoreClipboard(snapshot); } catch { /* Keep the successfully pasted suggestion. */ }
       }
-    }, 700);
+    }, 1200);
   }
   state.notice = monitorMode ? 'The active field was corrected.' : 'The selected text was replaced.';
   if (monitorMode) {
+    appliedMonitorSnapshot = { key: pendingSelection.key, text: currentResult };
     state.monitorStatus = 'Correction applied';
     assistantState('done', { action: 'Correction applied', unchanged: false });
   }
-  else assistantWindow?.hide();
+  else {
+    assistantWindow?.hide();
+    pendingSelection = undefined;
+    currentResult = '';
+  }
   publishState();
 }
 
 function registerShortcut(value = state.shortcut) {
-  globalShortcut.unregisterAll();
+  if (value === state.shortcut) return true;
   if (!globalShortcut.register(value, () => void begin())) return false;
+  if (state.shortcut !== value) globalShortcut.unregister(state.shortcut);
   state.shortcut = value;
   return true;
 }
@@ -692,6 +737,19 @@ handle('app:update-settings', async (settings) => {
     state.selectedModel = settings.model;
     selectedModels[state.provider] = settings.model;
   }
+  if (typeof settings?.startupEnabled === 'boolean') {
+    state.startupEnabled = settings.startupEnabled;
+    app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: [path.resolve(root, '..')] });
+  }
+  if (Array.isArray(settings?.excludedApps)) {
+    const customNames = settings.excludedApps.map((name) => String(name).trim().toLowerCase().replace(/\.exe$/i, '')).filter(Boolean);
+    if (customNames.some((name) => !/^[a-z0-9._-]{1,80}$/.test(name)) || customNames.length > 40) throw new Error('Use up to 40 app process names, separated by commas.');
+    state.excludedApps = [...new Set(customNames)];
+    if (state.monitorEnabled) {
+      stopFocusMonitor();
+      startFocusMonitor();
+    }
+  }
   await savePreferences();
   publishState();
 });
@@ -703,8 +761,15 @@ handle('assistant:update-result', (value) => {
   if (typeof value !== 'string' || value.length > 60_000) throw new Error('Suggestion text is too long.');
   currentResult = value;
 });
-handle('assistant:dismiss', () => assistantWindow?.hide());
-handle('assistant:cancel', () => { activeRequest?.abort(); assistantWindow?.hide(); });
+handle('assistant:dismiss', () => {
+  assistantWindow?.hide();
+  if (pendingSelection && !pendingSelection.monitor) { pendingSelection = undefined; currentResult = ''; }
+});
+handle('assistant:cancel', () => {
+  if (pendingSelection?.monitor) activeRequest?.abort();
+  else { activeRequest?.abort(); pendingSelection = undefined; currentResult = ''; }
+  assistantWindow?.hide();
+});
 handle('live:proofread', proofreadLiveDraft);
 handle('live:cancel', cancelLiveProofread);
 handle('live:read-clipboard', () => clipboard.readText().slice(0, 6000));
@@ -715,24 +780,38 @@ handle('live:copy', (value) => {
 handle('app:show', () => showMain());
 
 async function loadPreferences() {
+  let raw = {};
+  let preferencesLoaded = true;
   try {
-    const raw = JSON.parse(await readFile(path.join(dataDir, 'preferences.json'), 'utf8'));
+    raw = JSON.parse(await readFile(path.join(dataDir, 'preferences.json'), 'utf8'));
     if (typeof raw.shortcut === 'string' && raw.shortcut.length <= 80) state.shortcut = raw.shortcut;
     if (typeof raw.monitorEnabled === 'boolean') state.monitorEnabled = raw.monitorEnabled;
+    if (typeof raw.startupEnabled === 'boolean') state.startupEnabled = raw.startupEnabled;
+    if (Array.isArray(raw.excludedApps)) {
+      const customNames = raw.excludedApps.map((name) => String(name).trim().toLowerCase().replace(/\.exe$/i, '')).filter((name) => /^[a-z0-9._-]{1,80}$/.test(name)).slice(0, 40);
+      state.excludedApps = [...new Set(customNames)];
+    }
     if (raw.provider === 'chatgpt' || raw.provider === 'gemini') state.provider = raw.provider;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
       for (const provider of ['chatgpt', 'gemini']) {
         if (typeof raw.selectedModels[provider] === 'string' && raw.selectedModels[provider].length <= 120) selectedModels[provider] = raw.selectedModels[provider];
       }
     } else if (typeof raw.selectedModel === 'string' && raw.selectedModel.length <= 120) selectedModels.chatgpt = raw.selectedModel;
-  } catch (error) { if (error.code !== 'ENOENT') state.notice = 'Saved settings could not be loaded; defaults are active.'; }
+  } catch (error) {
+    if (error.code !== 'ENOENT') { state.notice = 'Saved settings could not be loaded; defaults are active.'; preferencesLoaded = false; }
+  }
+  if (preferencesLoaded && raw.privacyDefaultsVersion !== 1) {
+    state.monitorEnabled = false;
+    state.startupEnabled = false;
+    await savePreferences();
+  }
 }
 
 async function savePreferences() {
   await mkdir(dataDir, { recursive: true });
   const file = path.join(dataDir, 'preferences.json');
   const temporary = `${file}.${randomUUID()}.tmp`;
-  try { await writeFile(temporary, JSON.stringify({ shortcut: state.shortcut, provider: state.provider, selectedModels, monitorEnabled: state.monitorEnabled }, null, 2), { flag: 'wx' }); await rename(temporary, file); }
+  try { await writeFile(temporary, JSON.stringify({ shortcut: state.shortcut, provider: state.provider, selectedModels, monitorEnabled: state.monitorEnabled, startupEnabled: state.startupEnabled, excludedApps: state.excludedApps, privacyDefaultsVersion: 1 }, null, 2), { flag: 'wx' }); await rename(temporary, file); }
   finally { await unlink(temporary).catch(() => {}); }
 }
 
@@ -759,11 +838,11 @@ else {
   startup('waiting for electron ready');
   void app.whenReady().then(async () => {
     startup('electron ready');
-    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath, args: [path.resolve(root, '..')] });
     await mkdir(dataDir, { recursive: true });
     startup('data directory ready');
     await loadPreferences();
     startup('preferences loaded');
+    app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: [path.resolve(root, '..')] });
     await loadGeminiApiKey();
     startup('Gemini credential metadata loaded');
     await createMainWindow();

@@ -62,6 +62,8 @@ function render(state) {
   $('monitor-toggle').textContent = monitoring ? 'Pause monitoring' : 'Resume monitoring';
   $('monitor-toggle').setAttribute('aria-pressed', String(monitoring));
   $('monitor-indicator').classList.toggle('on', monitoring);
+  $('startup-toggle').checked = Boolean(state.startupEnabled);
+  $('excluded-apps-input').value = (state.excludedApps || []).join(', ');
   const select = $('model-select');
   select.replaceChildren();
   for (const model of state.models) {
@@ -153,6 +155,15 @@ $('model-select').addEventListener('change', async () => {
 });
 $('shortcut-save').addEventListener('click', async () => {
   try { await api.updateSettings({ shortcut: $('shortcut-input').value.trim() }); showNotice('Shortcut saved.', true); }
+  catch (error) { showNotice(error.message, true); }
+});
+$('startup-toggle').addEventListener('change', async () => {
+  try { await api.updateSettings({ startupEnabled: $('startup-toggle').checked }); showNotice('Startup preference saved.', true); }
+  catch (error) { showNotice(error.message, true); }
+});
+$('excluded-apps-save').addEventListener('click', async () => {
+  const names = $('excluded-apps-input').value.split(',').map((name) => name.trim()).filter(Boolean);
+  try { await api.updateSettings({ excludedApps: names }); showNotice('App exclusions saved.', true); }
   catch (error) { showNotice(error.message, true); }
 });
 

@@ -4,7 +4,7 @@ ClearWrite is a Windows desktop writing assistant. It offers automatic proofread
 
 ## Features
 
-- **Live writing monitor:** observes the focused text field and waits for an actual text edit and a short pause before requesting a suggestion. It does not proofread a field just because you focus or read it. Password fields and controls identified as read-only are ignored.
+- **Live writing monitor:** off by default. When enabled, it observes editable UI Automation value fields and waits for a detected text change and a short pause before requesting a suggestion. Read-only documents, password fields, and excluded apps are ignored.
 - **Manual shortcut:** select text and press `Ctrl+Shift+Space` to open the assistant. The shortcut continues to work when live monitoring is paused.
 - **Review before use:** see the original and suggested text, with changes highlighted. Copy a suggestion or apply it in supported single-line fields. Full-document controls are copy-only to avoid replacing an entire document unintentionally.
 - **Multiple providers:** connect ChatGPT plan usage with Sign in with ChatGPT, or configure a Google Gemini API key in Settings.
@@ -40,7 +40,7 @@ npm start
 
 The sibling folder must be named `WritingAssistantDevKit` because the local package reference in `package.json` points to `../WritingAssistantDevKit/packages/local`.
 
-On first run, configure a provider in Settings. The default shortcut is `Ctrl+Shift+Space`. Use the Live writing page to pause or resume automatic monitoring.
+On first run, configure a provider in Settings. The default shortcut is `Ctrl+Shift+Space`. Automatic monitoring and Windows startup are opt-in. Use the Live writing page to pause or resume monitoring; configure additional excluded app process names in Settings.
 
 You can also run `start-clearwrite.cmd` after installing dependencies; it sets local runtime data and Electron cache folders relative to the checkout.
 
@@ -49,7 +49,8 @@ You can also run `start-clearwrite.cmd` after installing dependencies; it sets l
 - By default, application data is stored in the project's ignored `data/` directory. Set `CLEARWRITE_DATA_DIR` to use another location.
 - ChatGPT sign-in credentials are managed by the official DevKit and protected using Windows secure storage. ClearWrite does not store your ChatGPT password.
 - Gemini API keys are encrypted with Electron's Windows secure storage.
-- Live monitoring sends the text of the edited field to the selected provider after you change it and pause. Manual actions send the selected text and the chosen action. Review each suggestion; ClearWrite never applies a live suggestion automatically.
+- Live monitoring is disabled by default. When enabled, it sends the text of an editable field to the selected provider after a detected change and pause. UI Automation cannot always distinguish a person's keystrokes from an app changing an editable field, so exclude sensitive apps and keep monitoring paused when it is not needed. Manual actions send only the selected text and chosen action. Review each suggestion; ClearWrite never applies a live suggestion automatically.
+- Automatic monitoring ignores password fields, read-only document controls, and by default Command Prompt, PowerShell, Windows Terminal, and Registry Editor. Additional process names can be excluded in Settings.
 - ClearWrite does not keep a draft history. Provider processing and retention are governed by the provider's terms and settings.
 - Keep `data/`, `cache/`, `.env` files, and local logs private. They are excluded by `.gitignore`; do not force-add them to a public repository.
 

@@ -148,6 +148,8 @@ select, input { min-width: 0; padding: 7px 9px; border: 1px solid #cfd9d5; borde
 .shortcut-controls { display: flex; gap: 8px; margin: 13px 0 6px; }
 .shortcut-controls input { flex: 1; max-width: 330px; font-family: Consolas, monospace; font-size: 10px; }
 .settings-block small, .storage-footnote { color: #7d8985; font-size: 9px; }
+.setting-toggle { display: flex; align-items: center; gap: 9px; margin-top: 13px; color: #34413d; font-size: 11px; }
+.setting-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #277d66; }
 .account-controls { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .danger-button { color: var(--coral); }
 .storage-block { padding-bottom: 12px; }

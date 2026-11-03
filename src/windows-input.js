@@ -8,6 +8,8 @@ const powershell = process.env.SystemRoot
 
 const helper = String.raw`
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -26,16 +28,23 @@ public static class ClearWriteInput {
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
   [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
   public static void Chord(ushort key) {
+    var started = Environment.TickCount;
+    while (IsDown(0x10) || IsDown(0x11) || IsDown(0x12) || IsDown(0x5B) || IsDown(0x5C)) {
+      if (unchecked(Environment.TickCount - started) > 2000) throw new InvalidOperationException("Release Ctrl, Shift, and Alt, then try again.");
+      System.Threading.Thread.Sleep(25);
+    }
     var inputs = new INPUT[4];
     inputs[0] = Key(0x11, 0); inputs[1] = Key(key, 0); inputs[2] = Key(key, 2); inputs[3] = Key(0x11, 2);
     var inserted = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
     if (inserted != (uint)inputs.Length) throw new InvalidOperationException("Windows rejected simulated keyboard input (" + inserted + "/" + inputs.Length + " events; error " + Marshal.GetLastWin32Error() + ").");
   }
+  static bool IsDown(int key) { return (GetAsyncKeyState(key) & 0x8000) != 0; }
   public static void KeyPress(ushort key) {
     var inputs = new INPUT[2];
     inputs[0] = Key(key, 0); inputs[1] = Key(key, 2);
@@ -90,6 +99,14 @@ switch ($env:CLEARWRITE_ACTION) {
     $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
     Start-Sleep -Milliseconds 180
+    if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
+    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if ($null -eq $focused) { throw 'The original text field is no longer focused. Nothing was replaced.' }
+    $runtimeId = [string]::Join('.', $focused.GetRuntimeId())
+    if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
+    $valuePattern = $null
+    if (-not $focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern) -or $valuePattern.Current.IsReadOnly) { throw 'This text field cannot be safely replaced.' }
+    if ($valuePattern.Current.Value -cne $env:CLEARWRITE_EXPECTED_TEXT) { throw 'The text changed since this suggestion was created. Nothing was replaced.' }
     [ClearWriteInput]::Chord(0x41)
     Start-Sleep -Milliseconds 80
     [ClearWriteInput]::Chord(0x56)
@@ -104,14 +121,14 @@ switch ($env:CLEARWRITE_ACTION) {
 }
 `;
 
-async function run(action, target) {
+async function run(action, target, expectedText, runtimeId) {
   const { stdout } = await execFileAsync(powershell, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', helper,
   ], {
     windowsHide: true,
     timeout: 8000,
     maxBuffer: 16_000,
-    env: { ...process.env, CLEARWRITE_ACTION: action, CLEARWRITE_TARGET: String(target ?? '') },
+    env: { ...process.env, CLEARWRITE_ACTION: action, CLEARWRITE_TARGET: String(target ?? ''), CLEARWRITE_EXPECTED_TEXT: expectedText ?? '', CLEARWRITE_RUNTIME_ID: runtimeId ?? '' },
   });
   return stdout.trim();
 }
@@ -134,9 +151,10 @@ export async function pasteToWindow(target) {
   await run('paste', target);
 }
 
-export async function replaceFieldInWindow(target) {
+export async function replaceFieldInWindow(target, expectedText, runtimeId) {
   if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text field is no longer available.');
-  await run('replace-field', target);
+  if (typeof expectedText !== 'string' || typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
+  await run('replace-field', target, expectedText, runtimeId);
 }
 
 export async function raiseWindowWithoutFocus(target) {

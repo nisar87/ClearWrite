@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $null = Add-Type -AssemblyName UIAutomationClient
 $null = Add-Type -AssemblyName UIAutomationTypes
 $native = @"
@@ -21,6 +22,12 @@ $lastKey = ''
 $lastText = $null
 $lastActive = $false
 $readFailures = 0
+$excludedProcesses = @('cmd', 'powershell', 'pwsh', 'windowsterminal', 'wt', 'regedit')
+try {
+  $configuredExclusions = ConvertFrom-Json -InputObject $env:CLEARWRITE_EXCLUDED_PROCESSES
+  if ($configuredExclusions -is [System.Array]) { $excludedProcesses += @($configuredExclusions | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+} catch { }
+$excludedProcesses = @($excludedProcesses | Select-Object -Unique)
 
 function Send-Payload($payload) {
   [Console]::Out.WriteLine(($payload | ConvertTo-Json -Compress -Depth 4))
@@ -46,21 +53,26 @@ while ($true) {
       Start-Sleep -Milliseconds 300
       continue
     }
+    $processName = [System.Diagnostics.Process]::GetProcessById($current.ProcessId).ProcessName.ToLowerInvariant()
+    if ($processName -in $excludedProcesses) {
+      if ($lastActive) { Send-Payload @{ active = $false; reason = 'excludedApp' } }
+      $lastKey = ''
+      $lastText = $null
+      $lastActive = $false
+      $readFailures = 0
+      Start-Sleep -Milliseconds 300
+      continue
+    }
     $type = $current.ControlType.ProgrammaticName
     if ($type -notin @('ControlType.Edit', 'ControlType.Document', 'ControlType.ComboBox')) { throw 'Not a supported text field.' }
 
     $pattern = $null
     $value = ''
-    $isReadOnly = $false
+    $isReadOnly = $true
     if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
       $value = $pattern.Current.Value
       $isReadOnly = $pattern.Current.IsReadOnly
-    } else {
-      $pattern = $null
-      if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
-        $value = $pattern.DocumentRange.GetText(6001)
-      } else { throw 'No readable text pattern.' }
-    }
+    } else { throw 'No editable value pattern.' }
 
     if ($isReadOnly) {
       if ($lastActive) { Send-Payload @{ active = $false; reason = 'readonly' } }
@@ -83,6 +95,10 @@ while ($true) {
         active = $true
         key = $key
         processId = $current.ProcessId
+        processName = $processName
+        runtimeId = $runtimeId
+        editable = $true
+        readOnly = $false
         changed = $textChanged
         target = [ClearWriteFocusNative]::ForegroundHandle()
         text = $value

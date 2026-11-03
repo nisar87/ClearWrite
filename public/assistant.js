@@ -83,6 +83,7 @@ function render(state) {
   $('result-title').textContent = state.action || 'Suggestion';
   $('replace-button').textContent = state.monitor ? 'Apply correction' : 'Replace selected text';
   $('replace-button').classList.toggle('hidden', Boolean(state.replyOnly || (state.monitor && !state.replaceSupported)));
+  $('replace-button').disabled = !state.connected || (state.status === 'done' && state.unchanged);
   $('copy-button').textContent = state.replyOnly ? 'Copy reply' : 'Copy';
   $('actions').querySelectorAll('button').forEach((button) => { button.disabled = !state.connected; });
   if (!state.connected && state.status === 'ready') $('inline-error').textContent = `Connect ${state.provider === 'gemini' ? 'Gemini API' : 'ChatGPT plan usage'} in ClearWrite settings to use AI actions.`;
@@ -93,7 +94,10 @@ document.querySelectorAll('[data-action]').forEach((button) => button.addEventLi
   try { await api.transform(button.dataset.action); }
   catch (error) { $('inline-error').textContent = error.message; }
 }));
-$('result-text').addEventListener('input', () => api.updateResult($('result-text').value));
+$('result-text').addEventListener('input', () => {
+  api.updateResult($('result-text').value);
+  $('replace-button').disabled = !latest?.connected || $('result-text').value === (latest?.text || '');
+});
 $('close-button').addEventListener('click', () => api.dismiss());
 $('back-button').addEventListener('click', () => { $('result-section').classList.add('hidden'); $('actions').classList.remove('hidden'); });
 $('copy-button').addEventListener('click', async () => {

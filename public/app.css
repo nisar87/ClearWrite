@@ -150,6 +150,11 @@ select, input { min-width: 0; padding: 7px 9px; border: 1px solid #cfd9d5; borde
 .settings-block small, .storage-footnote { color: #7d8985; font-size: 9px; }
 .setting-toggle { display: flex; align-items: center; gap: 9px; margin-top: 13px; color: #34413d; font-size: 11px; }
 .setting-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #277d66; }
+.monitor-app-row, .monitor-pause-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 11px; color: #687570; font-size: 10px; }
+.monitor-app-row { justify-content: space-between; }
+.monitor-app-row strong { color: #34413d; font-family: Consolas, monospace; font-weight: 600; }
+.monitor-pause-actions button { min-height: 29px; padding: 5px 9px; font-size: 10px; }
+.monitor-app-row button:disabled, .monitor-pause-actions button:disabled { opacity: .5; cursor: default; }
 .account-controls { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .danger-button { color: var(--coral); }
 .storage-block { padding-bottom: 12px; }

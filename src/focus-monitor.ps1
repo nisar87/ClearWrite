@@ -22,12 +22,21 @@ $lastKey = ''
 $lastText = $null
 $lastActive = $false
 $readFailures = 0
+$lastReportedApp = ''
+$lastBlockedApp = ''
+$lastSuppressedApp = ''
 $excludedProcesses = @('cmd', 'powershell', 'pwsh', 'windowsterminal', 'wt', 'regedit')
 try {
   $configuredExclusions = ConvertFrom-Json -InputObject $env:CLEARWRITE_EXCLUDED_PROCESSES
   if ($configuredExclusions -is [System.Array]) { $excludedProcesses += @($configuredExclusions | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
 } catch { }
 $excludedProcesses = @($excludedProcesses | Select-Object -Unique)
+$allowedProcesses = @()
+$restrictToAllowed = $env:CLEARWRITE_RESTRICT_TO_ALLOWED -eq 'true'
+try {
+  $configuredAllowed = ConvertFrom-Json -InputObject $env:CLEARWRITE_ALLOWED_PROCESSES
+  if ($configuredAllowed -is [System.Array]) { $allowedProcesses = @($configuredAllowed | ForEach-Object { ([string]$_).ToLowerInvariant() }) }
+} catch { }
 
 function Send-Payload($payload) {
   [Console]::Out.WriteLine(($payload | ConvertTo-Json -Compress -Depth 4))
@@ -40,9 +49,24 @@ while ($true) {
     if ($null -eq $element) { throw 'No focused element.' }
     $current = $element.Current
     if ($current.ProcessId -eq [int]$env:CLEARWRITE_PID -or [ClearWriteFocusNative]::ForegroundTitle() -like '*ClearWrite*') {
+      if ($lastReportedApp -ne 'clearwrite') {
+        Send-Payload @{ active = $false; reason = 'appDetected'; processName = 'clearwrite' }
+        $lastReportedApp = 'clearwrite'
+        $lastKey = ''
+        $lastText = $null
+        $lastActive = $false
+      }
       $readFailures = 0
       Start-Sleep -Milliseconds 300
       continue
+    }
+    $processName = [System.Diagnostics.Process]::GetProcessById($current.ProcessId).ProcessName.ToLowerInvariant()
+    if ($processName -ne $lastReportedApp) {
+      Send-Payload @{ active = $false; reason = 'appDetected'; processName = $processName }
+      $lastReportedApp = $processName
+      $lastKey = ''
+      $lastText = $null
+      $lastActive = $false
     }
     if ($current.IsPassword) {
       if ($lastActive) { Send-Payload @{ active = $false; reason = 'password' } }
@@ -53,9 +77,9 @@ while ($true) {
       Start-Sleep -Milliseconds 300
       continue
     }
-    $processName = [System.Diagnostics.Process]::GetProcessById($current.ProcessId).ProcessName.ToLowerInvariant()
     if ($processName -in $excludedProcesses) {
-      if ($lastActive) { Send-Payload @{ active = $false; reason = 'excludedApp' } }
+      if ($lastSuppressedApp -ne $processName) { Send-Payload @{ active = $false; reason = 'excludedApp'; processName = $processName } }
+      $lastSuppressedApp = $processName
       $lastKey = ''
       $lastText = $null
       $lastActive = $false
@@ -63,6 +87,18 @@ while ($true) {
       Start-Sleep -Milliseconds 300
       continue
     }
+    $lastSuppressedApp = ''
+    if ($restrictToAllowed -and $processName -notin $allowedProcesses) {
+      if ($lastBlockedApp -ne $processName) { Send-Payload @{ active = $false; reason = 'notAllowed'; processName = $processName } }
+      $lastBlockedApp = $processName
+      $lastKey = ''
+      $lastText = $null
+      $lastActive = $false
+      $readFailures = 0
+      Start-Sleep -Milliseconds 300
+      continue
+    }
+    $lastBlockedApp = ''
     $type = $current.ControlType.ProgrammaticName
     if ($type -notin @('ControlType.Edit', 'ControlType.Document', 'ControlType.ComboBox')) { throw 'Not a supported text field.' }
 

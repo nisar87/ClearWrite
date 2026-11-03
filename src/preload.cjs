@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('clearWrite', {
   updateSettings: (settings) => ipcRenderer.invoke('app:update-settings', settings),
   updateProvider: (provider) => ipcRenderer.invoke('app:update-provider', provider),
   setMonitor: (enabled) => ipcRenderer.invoke('app:set-monitor', enabled),
+  pauseMonitor: (period) => ipcRenderer.invoke('app:pause-monitor', period),
   saveGeminiKey: (key) => ipcRenderer.invoke('gemini:save-key', key),
   removeGeminiKey: () => ipcRenderer.invoke('gemini:remove-key'),
   testGemini: () => ipcRenderer.invoke('gemini:test'),

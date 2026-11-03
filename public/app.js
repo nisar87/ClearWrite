@@ -56,14 +56,26 @@ function render(state) {
   $('live-model-label').textContent = state.selectedModel ? state.models.find((model) => model.slug === state.selectedModel)?.displayName || '' : '';
   $('shortcut-chip').textContent = formatShortcut(state.shortcut);
   $('shortcut-input').value = state.shortcut;
-  const monitoring = Boolean(state.monitorEnabled);
-  $('monitor-heading').textContent = monitoring ? 'Monitoring is on' : 'Monitoring is paused';
+  const timedPause = Boolean(state.monitorEnabled && state.monitorPausedUntil > Date.now());
+  const monitoring = Boolean(state.monitorEnabled && !timedPause);
+  $('monitor-heading').textContent = monitoring ? 'Monitoring is on' : timedPause ? 'Monitoring is paused temporarily' : 'Monitoring is paused';
   $('monitor-status').textContent = state.monitorStatus || (monitoring ? 'Waiting for a text field' : 'Monitoring paused');
   $('monitor-toggle').textContent = monitoring ? 'Pause monitoring' : 'Resume monitoring';
   $('monitor-toggle').setAttribute('aria-pressed', String(monitoring));
   $('monitor-indicator').classList.toggle('on', monitoring);
+  $('pause-monitor-hour').disabled = !state.monitorEnabled;
+  $('pause-monitor-tomorrow').disabled = !state.monitorEnabled;
   $('startup-toggle').checked = Boolean(state.startupEnabled);
   $('excluded-apps-input').value = (state.excludedApps || []).join(', ');
+  $('allowed-apps-input').value = (state.allowedApps || []).join(', ');
+  $('restrict-apps-toggle').checked = Boolean(state.restrictToAllowedApps);
+  const focusedApp = state.lastFocusedApp || '';
+  const builtInExclusions = ['clearwrite', 'cmd', 'powershell', 'pwsh', 'windowsterminal', 'wt', 'regedit'];
+  const appExcluded = builtInExclusions.includes(focusedApp) || (state.excludedApps || []).includes(focusedApp);
+  const appAllowed = Boolean(state.restrictToAllowedApps && (state.allowedApps || []).includes(focusedApp));
+  $('monitor-current-app').textContent = focusedApp || (state.monitorEnabled ? 'Focus an app to detect it' : 'Turn monitoring on to detect an app');
+  $('allow-current-app').disabled = !focusedApp || appExcluded || appAllowed;
+  $('allow-current-app').textContent = appExcluded ? 'Blocked by safety rule' : appAllowed ? 'Already allowed' : 'Add this app to allowlist';
   const select = $('model-select');
   select.replaceChildren();
   for (const model of state.models) {
@@ -166,10 +178,39 @@ $('excluded-apps-save').addEventListener('click', async () => {
   try { await api.updateSettings({ excludedApps: names }); showNotice('App exclusions saved.', true); }
   catch (error) { showNotice(error.message, true); }
 });
+$('allowed-apps-save').addEventListener('click', async () => {
+  const names = $('allowed-apps-input').value.split(',').map((name) => name.trim()).filter(Boolean);
+  try {
+    await api.updateSettings({ allowedApps: names, restrictToAllowedApps: $('restrict-apps-toggle').checked });
+    showNotice('Allowed apps saved.', true);
+  } catch (error) { showNotice(error.message, true); }
+});
+$('restrict-apps-toggle').addEventListener('change', async () => {
+  try { await api.updateSettings({ restrictToAllowedApps: $('restrict-apps-toggle').checked }); showNotice('App monitoring mode saved.', true); }
+  catch (error) { showNotice(error.message, true); }
+});
+$('allow-current-app').addEventListener('click', async () => {
+  const processName = current?.lastFocusedApp;
+  if (!processName) return;
+  const names = [...new Set([...(current.allowedApps || []), processName])];
+  try {
+    await api.updateSettings({ allowedApps: names, restrictToAllowedApps: true });
+    showNotice(`${processName} added. Monitoring is now limited to apps in the allowlist.`, true);
+  } catch (error) { showNotice(error.message, true); }
+});
+$('pause-monitor-hour').addEventListener('click', async () => {
+  try { await api.pauseMonitor('hour'); showNotice('Monitoring will resume in one hour.'); }
+  catch (error) { showNotice(error.message); }
+});
+$('pause-monitor-tomorrow').addEventListener('click', async () => {
+  try { await api.pauseMonitor('tomorrow'); showNotice('Monitoring will resume tomorrow.'); }
+  catch (error) { showNotice(error.message); }
+});
 
 $('monitor-toggle').addEventListener('click', async () => {
   $('monitor-toggle').disabled = true;
-  try { await requireApi('setMonitor')(!current?.monitorEnabled); }
+  const active = Boolean(current?.monitorEnabled && !(current?.monitorPausedUntil > Date.now()));
+  try { await requireApi('setMonitor')(!active); }
   catch (error) { showNotice(error.message); }
   finally { $('monitor-toggle').disabled = false; }
 });

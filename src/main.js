@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, s
 import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, isUserEditSnapshot, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
+import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -12,7 +13,7 @@ import { captureSelection, pasteToWindow, raiseWindowWithoutFocus, replaceFieldI
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || path.resolve(root, '..', 'data');
 const startupLog = path.join(dataDir, 'startup.log');
-const defaultExcludedApps = ['cmd', 'powershell', 'pwsh', 'windowsterminal', 'wt', 'regedit'];
+const defaultExcludedApps = DEFAULT_EXCLUDED_PROCESSES;
 function startup(message) { void appendFile(startupLog, `${new Date().toISOString()} ${message}\n`).catch(() => {}); }
 app.setName('ClearWrite');
 app.setPath('userData', dataDir);
@@ -27,6 +28,7 @@ let liveRequest;
 let focusMonitor;
 let monitorTimer;
 let monitorInactiveTimer;
+let monitorResumeTimer;
 let monitorRevision = 0;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
@@ -47,8 +49,12 @@ let state = {
   shortcut: 'CommandOrControl+Shift+Space',
   notice: '',
   monitorEnabled: false,
+  monitorPausedUntil: 0,
   startupEnabled: false,
   excludedApps: [],
+  allowedApps: [],
+  restrictToAllowedApps: false,
+  lastFocusedApp: '',
   monitorStatus: 'Monitoring paused',
 };
 
@@ -265,6 +271,15 @@ function assistantState(status, details = {}) {
   publishAssistant({ status, text: pendingSelection?.text || '', result: currentResult, connected: providerReady(), provider: state.provider, monitor: Boolean(pendingSelection?.monitor), replaceSupported: Boolean(pendingSelection?.replaceSupported), ...details });
 }
 
+function monitoringActive() {
+  return isMonitoringActive(state.monitorEnabled, state.monitorPausedUntil);
+}
+
+function monitorPauseLabel() {
+  if (!state.monitorPausedUntil) return 'Monitoring paused';
+  return `Paused until ${new Date(state.monitorPausedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 function cancelMonitorWork(hide = true) {
   clearTimeout(monitorTimer);
   clearTimeout(monitorInactiveTimer);
@@ -280,7 +295,23 @@ function cancelMonitorWork(hide = true) {
 }
 
 function handleFocusSnapshot(snapshot) {
-  if (!state.monitorEnabled) return;
+  if (!monitoringActive()) return;
+  if (snapshot?.processName && snapshot.processName !== 'clearwrite') state.lastFocusedApp = snapshot.processName;
+  if (snapshot?.reason === 'appDetected') {
+    if (pendingSelection?.monitor) cancelMonitorWork();
+    state.monitorStatus = 'Waiting for a text field';
+    publishState();
+    return;
+  }
+  if (snapshot?.active && !isProcessAllowed(snapshot.processName, state.restrictToAllowedApps, state.allowedApps, state.excludedApps)) {
+    clearTimeout(monitorTimer);
+    if (pendingSelection?.monitor) cancelMonitorWork();
+    state.monitorStatus = DEFAULT_EXCLUDED_PROCESSES.includes(snapshot.processName) || state.excludedApps.includes(snapshot.processName)
+      ? 'Suggestions are disabled for this app'
+      : 'This app is not in your allowlist';
+    publishState();
+    return;
+  }
   if (pendingSelection && !pendingSelection.monitor && assistantWindow?.isVisible()) return;
   if (!snapshot?.active) {
     clearTimeout(monitorTimer);
@@ -296,7 +327,7 @@ function handleFocusSnapshot(snapshot) {
       publishState();
       return;
     }
-    state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Reading field; suggestions wait until you type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : 'Checking focus…';
+    state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Reading field; suggestions wait until you type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : snapshot?.reason === 'notAllowed' ? 'This app is not in your allowlist' : 'Checking focus…';
     publishState();
     clearTimeout(monitorInactiveTimer);
     monitorInactiveTimer = setTimeout(() => {
@@ -307,7 +338,7 @@ function handleFocusSnapshot(snapshot) {
       }
       lastMonitorKey = '';
       cancelMonitorWork();
-      state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : 'Waiting for a text field';
+      state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : snapshot?.reason === 'notAllowed' ? 'This app is not in your allowlist' : 'Waiting for a text field';
       publishState();
     }, 900);
     return;
@@ -384,7 +415,7 @@ async function showMonitorPanel(snapshot, revision) {
 }
 
 async function requestMonitorProofread(snapshot, revision) {
-  if (!state.monitorEnabled || revision !== monitorRevision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
+  if (!monitoringActive() || revision !== monitorRevision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
   if (busy) {
     monitorTimer = setTimeout(() => { void requestMonitorProofread(snapshot, revision); }, 250);
     return;
@@ -444,11 +475,17 @@ function assistantNativeHandle() {
 }
 
 function startFocusMonitor() {
-  if (!state.monitorEnabled || focusMonitor) return;
+  if (!monitoringActive() || focusMonitor) return;
   const helperPath = path.join(root, 'focus-monitor.ps1');
   focusMonitor = spawn(process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : 'powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath,
-  ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CLEARWRITE_PID: String(process.pid), CLEARWRITE_EXCLUDED_PROCESSES: JSON.stringify([...defaultExcludedApps, ...state.excludedApps]) } });
+  ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: {
+    ...process.env,
+    CLEARWRITE_PID: String(process.pid),
+    CLEARWRITE_EXCLUDED_PROCESSES: JSON.stringify([...defaultExcludedApps, ...state.excludedApps]),
+    CLEARWRITE_ALLOWED_PROCESSES: JSON.stringify(state.allowedApps),
+    CLEARWRITE_RESTRICT_TO_ALLOWED: String(state.restrictToAllowedApps),
+  } });
   monitorLineBuffer = '';
   focusMonitor.stdout.setEncoding('utf8');
   focusMonitor.stdout.on('data', (chunk) => {
@@ -471,7 +508,7 @@ function startFocusMonitor() {
   });
   focusMonitor.once('exit', () => {
     focusMonitor = undefined;
-    if (state.monitorEnabled && !quitting) {
+    if (monitoringActive() && !quitting) {
       state.monitorStatus = 'Monitor stopped; restart ClearWrite to retry';
       publishState();
     }
@@ -490,11 +527,51 @@ function stopFocusMonitor() {
 
 async function setMonitorEnabled(enabled) {
   if (typeof enabled !== 'boolean') throw new Error('Choose whether field monitoring is on or paused.');
+  clearTimeout(monitorResumeTimer);
+  monitorResumeTimer = undefined;
   state.monitorEnabled = enabled;
+  state.monitorPausedUntil = 0;
   await savePreferences();
   if (enabled) startFocusMonitor(); else stopFocusMonitor();
+  updateTrayMenu();
   publishState();
   return state.monitorEnabled;
+}
+
+async function pauseMonitoring(period) {
+  if (!state.monitorEnabled) throw new Error('Turn on monitoring before scheduling a temporary pause.');
+  state.monitorPausedUntil = monitoringPauseDeadline(period);
+  clearTimeout(monitorResumeTimer);
+  stopFocusMonitor();
+  state.monitorStatus = monitorPauseLabel();
+  await savePreferences();
+  scheduleMonitorResume();
+  updateTrayMenu();
+  publishState();
+  return state.monitorPausedUntil;
+}
+
+function scheduleMonitorResume() {
+  clearTimeout(monitorResumeTimer);
+  if (!state.monitorEnabled || !state.monitorPausedUntil) return;
+  const remaining = state.monitorPausedUntil - Date.now();
+  if (remaining <= 0) {
+    state.monitorPausedUntil = 0;
+    state.monitorStatus = 'Waiting for a text field';
+    void savePreferences();
+    startFocusMonitor();
+    updateTrayMenu();
+    publishState();
+    return;
+  }
+  monitorResumeTimer = setTimeout(() => {
+    state.monitorPausedUntil = 0;
+    state.monitorStatus = 'Waiting for a text field';
+    void savePreferences();
+    startFocusMonitor();
+    updateTrayMenu();
+    publishState();
+  }, Math.min(remaining, 2_147_000_000));
 }
 
 async function begin() {
@@ -737,6 +814,7 @@ handle('app:update-provider', async (provider) => {
   await savePreferences();
 });
 handle('app:set-monitor', setMonitorEnabled);
+handle('app:pause-monitor', pauseMonitoring);
 handle('gemini:save-key', saveGeminiApiKey);
 handle('gemini:remove-key', removeGeminiApiKey);
 handle('gemini:test', testGeminiConnection);
@@ -761,10 +839,16 @@ handle('app:update-settings', async (settings) => {
     app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: [path.resolve(root, '..')] });
   }
   if (Array.isArray(settings?.excludedApps)) {
-    const customNames = settings.excludedApps.map((name) => String(name).trim().toLowerCase().replace(/\.exe$/i, '')).filter(Boolean);
-    if (customNames.some((name) => !/^[a-z0-9._-]{1,80}$/.test(name)) || customNames.length > 40) throw new Error('Use up to 40 app process names, separated by commas.');
-    state.excludedApps = [...new Set(customNames)];
-    if (state.monitorEnabled) {
+    state.excludedApps = normalizeProcessNames(settings.excludedApps);
+  }
+  if (Array.isArray(settings?.allowedApps)) {
+    const names = normalizeProcessNames(settings.allowedApps);
+    if (names.some((name) => defaultExcludedApps.includes(name))) throw new Error('ClearWrite always blocks sensitive system apps from monitoring.');
+    state.allowedApps = names;
+  }
+  if (typeof settings?.restrictToAllowedApps === 'boolean') state.restrictToAllowedApps = settings.restrictToAllowedApps;
+  if (Array.isArray(settings?.excludedApps) || Array.isArray(settings?.allowedApps) || typeof settings?.restrictToAllowedApps === 'boolean') {
+    if (monitoringActive()) {
       stopFocusMonitor();
       startFocusMonitor();
     }
@@ -805,10 +889,14 @@ async function loadPreferences() {
     raw = JSON.parse(await readFile(path.join(dataDir, 'preferences.json'), 'utf8'));
     if (typeof raw.shortcut === 'string' && raw.shortcut.length <= 80) state.shortcut = raw.shortcut;
     if (typeof raw.monitorEnabled === 'boolean') state.monitorEnabled = raw.monitorEnabled;
+    if (Number.isFinite(raw.monitorPausedUntil) && raw.monitorPausedUntil > Date.now()) state.monitorPausedUntil = raw.monitorPausedUntil;
+    if (typeof raw.restrictToAllowedApps === 'boolean') state.restrictToAllowedApps = raw.restrictToAllowedApps;
     if (typeof raw.startupEnabled === 'boolean') state.startupEnabled = raw.startupEnabled;
     if (Array.isArray(raw.excludedApps)) {
-      const customNames = raw.excludedApps.map((name) => String(name).trim().toLowerCase().replace(/\.exe$/i, '')).filter((name) => /^[a-z0-9._-]{1,80}$/.test(name)).slice(0, 40);
-      state.excludedApps = [...new Set(customNames)];
+      try { state.excludedApps = normalizeProcessNames(raw.excludedApps); } catch { }
+    }
+    if (Array.isArray(raw.allowedApps)) {
+      try { state.allowedApps = normalizeProcessNames(raw.allowedApps).filter((name) => !defaultExcludedApps.includes(name)); } catch { }
     }
     if (raw.provider === 'chatgpt' || raw.provider === 'gemini') state.provider = raw.provider;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
@@ -824,23 +912,25 @@ async function loadPreferences() {
     state.startupEnabled = false;
     await savePreferences();
   }
+  if (state.monitorPausedUntil > Date.now()) state.monitorStatus = monitorPauseLabel();
+  scheduleMonitorResume();
 }
 
 async function savePreferences() {
   await mkdir(dataDir, { recursive: true });
   const file = path.join(dataDir, 'preferences.json');
   const temporary = `${file}.${randomUUID()}.tmp`;
-  try { await writeFile(temporary, JSON.stringify({ shortcut: state.shortcut, provider: state.provider, selectedModels, monitorEnabled: state.monitorEnabled, startupEnabled: state.startupEnabled, excludedApps: state.excludedApps, privacyDefaultsVersion: 1 }, null, 2), { flag: 'wx' }); await rename(temporary, file); }
+  try { await writeFile(temporary, JSON.stringify({ shortcut: state.shortcut, provider: state.provider, selectedModels, monitorEnabled: state.monitorEnabled, monitorPausedUntil: state.monitorPausedUntil, startupEnabled: state.startupEnabled, excludedApps: state.excludedApps, allowedApps: state.allowedApps, restrictToAllowedApps: state.restrictToAllowedApps, privacyDefaultsVersion: 1 }, null, 2), { flag: 'wx' }); await rename(temporary, file); }
   finally { await unlink(temporary).catch(() => {}); }
 }
 
-async function createTray() {
-  const icon = await app.getFileIcon(process.execPath, { size: 'small' });
-  tray = new Tray(icon);
-  tray.setToolTip('ClearWrite - select text and press Ctrl+Shift+Space');
+function updateTrayMenu() {
+  if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open ClearWrite', click: () => void showMain() },
-    { label: 'Monitor focused writing', type: 'checkbox', checked: state.monitorEnabled, click: (item) => { void setMonitorEnabled(item.checked); } },
+    { label: 'Monitor focused writing', type: 'checkbox', checked: monitoringActive(), click: (item) => { void setMonitorEnabled(item.checked); } },
+    { label: 'Pause monitoring for 1 hour', enabled: state.monitorEnabled, click: () => void pauseMonitoring('hour') },
+    { label: 'Pause monitoring until tomorrow', enabled: state.monitorEnabled, click: () => void pauseMonitoring('tomorrow') },
     { label: 'Correct selected text', click: () => void begin() },
     { label: 'Cancel request', click: () => activeRequest?.abort() },
     { type: 'separator' },
@@ -848,6 +938,13 @@ async function createTray() {
     { type: 'separator' },
     { label: 'Quit ClearWrite', click: () => app.quit() },
   ]));
+}
+
+async function createTray() {
+  const icon = await app.getFileIcon(process.execPath, { size: 'small' });
+  tray = new Tray(icon);
+  tray.setToolTip('ClearWrite - select text and press Ctrl+Shift+Space');
+  updateTrayMenu();
   tray.on('double-click', () => void showMain());
 }
 
@@ -881,5 +978,5 @@ else {
   });
 }
 
-app.on('before-quit', () => { quitting = true; activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
+app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
 app.on('window-all-closed', () => {});

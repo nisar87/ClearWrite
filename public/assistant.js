@@ -65,16 +65,40 @@ function render(state) {
   $('source-label').textContent = state.monitor ? (state.replaceSupported ? 'ACTIVE FIELD' : 'ACTIVE DOCUMENT') : 'YOUR SELECTION';
   $('selection-counter').textContent = state.text ? `${state.text.length.toLocaleString()} characters` : '';
   $('assistant-dot').classList.toggle('on', Boolean(state.connected));
-  $('provider-label').textContent = state.monitor
-    ? `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} after a pause`
-    : `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} only after your choice`;
+  $('provider-label').textContent = state.localOnly
+    ? 'Checked on this device; no text was sent to an AI provider'
+    : state.monitor
+      ? `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} after a pause`
+      : `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} only after your choice`;
+  const localReview = state.monitor ? state.localReview : null;
+  $('local-review').classList.toggle('hidden', !localReview);
+  $('local-findings').replaceChildren();
+  if (localReview) {
+    $('local-review-summary').textContent = !localReview.supported
+      ? localReview.reason || 'English check skipped'
+      : localReview.findings.length
+        ? `${localReview.findings.length} possible ${localReview.findings.length === 1 ? 'issue' : 'issues'}`
+        : 'No likely issues found';
+    for (const finding of localReview.findings) {
+      const item = document.createElement('li');
+      const message = document.createElement('span');
+      message.textContent = finding.message;
+      item.append(message);
+      if (finding.suggestions.length) {
+        const suggestion = document.createElement('small');
+        suggestion.textContent = `Suggestion: ${finding.suggestions.join(' / ')}`;
+        item.append(suggestion);
+      }
+      $('local-findings').append(item);
+    }
+  }
   $('actions').classList.toggle('hidden', state.monitor || state.status === 'working' || state.status === 'done');
   $('result-section').classList.toggle('hidden', state.status !== 'done');
   $('working-row').classList.toggle('hidden', !waiting && !working);
   $('working-row').querySelector('.spinner').classList.toggle('hidden', waiting);
   $('cancel-button').classList.toggle('hidden', waiting);
   $('inline-error').textContent = state.status === 'error' ? state.message || '' : '';
-  $('result-state').textContent = state.status === 'done' ? (state.unchanged ? 'No change needed' : 'Review before using') : '';
+  $('result-state').textContent = state.status === 'done' ? state.localOnly ? 'Offline result' : state.unchanged ? 'No change needed' : 'Review before using' : '';
   if (waiting) $('working-label').textContent = state.action || 'Waiting for you to pause…';
   if (working) $('working-label').textContent = `${state.action || 'Working'}…`;
   if (state.status === 'done' || working) $('result-text').value = state.result || '';
@@ -83,7 +107,7 @@ function render(state) {
   $('result-title').textContent = state.action || 'Suggestion';
   $('replace-button').textContent = state.monitor ? 'Apply correction' : 'Replace selected text';
   $('replace-button').classList.toggle('hidden', Boolean(state.replyOnly || (state.monitor && !state.replaceSupported)));
-  $('replace-button').disabled = !state.connected || (state.status === 'done' && state.unchanged);
+  $('replace-button').disabled = (!state.connected && !state.localOnly) || (state.status === 'done' && state.unchanged);
   $('copy-button').textContent = state.replyOnly ? 'Copy reply' : 'Copy';
   $('actions').querySelectorAll('button').forEach((button) => { button.disabled = !state.connected; });
   if (!state.connected && state.status === 'ready') $('inline-error').textContent = `Connect ${state.provider === 'gemini' ? 'Gemini API' : 'ChatGPT plan usage'} in ClearWrite settings to use AI actions.`;
@@ -96,7 +120,7 @@ document.querySelectorAll('[data-action]').forEach((button) => button.addEventLi
 }));
 $('result-text').addEventListener('input', () => {
   api.updateResult($('result-text').value);
-  $('replace-button').disabled = !latest?.connected || $('result-text').value === (latest?.text || '');
+  $('replace-button').disabled = (!latest?.connected && !latest?.localOnly) || $('result-text').value === (latest?.text || '');
 });
 $('close-button').addEventListener('click', () => api.dismiss());
 $('back-button').addEventListener('click', () => { $('result-section').classList.add('hidden'); $('actions').classList.remove('hidden'); });

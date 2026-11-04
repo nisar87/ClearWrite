@@ -3,6 +3,7 @@ import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, isUserEditSnapshot, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
+import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -29,6 +30,7 @@ let focusMonitor;
 let monitorTimer;
 let monitorInactiveTimer;
 let monitorResumeTimer;
+let localReviewTimer;
 let monitorRevision = 0;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
@@ -268,7 +270,7 @@ async function loadGeminiApiKey() {
 }
 
 function assistantState(status, details = {}) {
-  publishAssistant({ status, text: pendingSelection?.text || '', result: currentResult, connected: providerReady(), provider: state.provider, monitor: Boolean(pendingSelection?.monitor), replaceSupported: Boolean(pendingSelection?.replaceSupported), ...details });
+  publishAssistant({ status, text: pendingSelection?.text || '', result: currentResult, localReview: pendingSelection?.monitor ? pendingSelection.localReview || null : null, connected: providerReady(), provider: state.provider, monitor: Boolean(pendingSelection?.monitor), replaceSupported: Boolean(pendingSelection?.replaceSupported), ...details });
 }
 
 function monitoringActive() {
@@ -283,8 +285,10 @@ function monitorPauseLabel() {
 function cancelMonitorWork(hide = true) {
   clearTimeout(monitorTimer);
   clearTimeout(monitorInactiveTimer);
+  clearTimeout(localReviewTimer);
   monitorTimer = undefined;
   monitorInactiveTimer = undefined;
+  localReviewTimer = undefined;
   monitorRevision += 1;
   if (pendingSelection?.monitor) {
     activeRequest?.abort();
@@ -345,6 +349,8 @@ function handleFocusSnapshot(snapshot) {
   }
   clearTimeout(monitorInactiveTimer);
   monitorInactiveTimer = undefined;
+  clearTimeout(localReviewTimer);
+  localReviewTimer = undefined;
   const trimmedText = typeof snapshot.text === 'string' ? snapshot.text.trim() : '';
   if (typeof snapshot.text !== 'string' || snapshot.text.length > 6000) {
     clearTimeout(monitorTimer);
@@ -383,13 +389,37 @@ function handleFocusSnapshot(snapshot) {
   pendingSelection = { text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true };
   currentResult = '';
   state.monitorStatus = trimmedText.length < 3 ? 'Type at least 3 characters to get suggestions' : 'Checking after you pause…';
-  assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Waiting for you to pause…' });
+  assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Checking on this device…' });
   publishState();
-  if (trimmedText.length < 3) return;
   void showMonitorPanel(snapshot, revision);
+  if (trimmedText.length >= 3) localReviewTimer = setTimeout(() => { void updateLocalReview(snapshot, revision); }, 120);
+  if (trimmedText.length < 3) return;
   monitorTimer = setTimeout(async () => {
+    monitorTimer = undefined;
     await requestMonitorProofread(snapshot, revision);
   }, 700);
+}
+
+async function updateLocalReview(snapshot, revision) {
+  try {
+    const reviewPromise = pendingSelection?.localReviewPromise || proofreadLocally(snapshot.text);
+    pendingSelection.localReviewPromise = reviewPromise;
+    const review = await reviewPromise;
+    if (revision !== monitorRevision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
+    pendingSelection.localReview = review;
+    if (activeRequest) assistantState('working', { action: 'AI is reviewing the text…' });
+    else if (!providerReady() && monitorTimer === undefined) {
+      currentResult = review.correctedText || snapshot.text;
+      state.monitorStatus = review.findings.length ? 'Offline suggestions ready to review' : review.reason || 'Local check found no likely issues';
+      assistantState('done', { action: 'On-device English check', localOnly: true, unchanged: currentResult === snapshot.text });
+    }
+    else if (currentResult) assistantState('done', { action: 'AI correction', unchanged: currentResult === snapshot.text });
+    else assistantState('waiting', { action: 'On-device check ready; waiting for you to pause…' });
+  } catch (error) {
+    if (revision !== monitorRevision || !pendingSelection?.monitor) return;
+    pendingSelection.localReview = { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.' };
+    assistantState(activeRequest ? 'working' : 'waiting', { action: activeRequest ? 'AI is reviewing the text…' : 'Waiting for you to pause…' });
+  }
 }
 
 async function showMonitorPanel(snapshot, revision) {
@@ -404,7 +434,7 @@ async function showMonitorPanel(snapshot, revision) {
       assistantWindow.showInactive();
       assistantWindow.moveTop();
     }
-    assistantState('waiting', { action: snapshot.text.trim().length < 3 ? 'Type at least 3 characters…' : 'Waiting for you to pause…' });
+    assistantState('waiting', { action: snapshot.text.trim().length < 3 ? 'Type at least 3 characters…' : 'Checking on this device…' });
     if (!alreadyVisible) void raiseWindowWithoutFocus(assistantNativeHandle()).catch(() => {});
   } catch (error) {
     if (revision === monitorRevision) {
@@ -421,8 +451,22 @@ async function requestMonitorProofread(snapshot, revision) {
     return;
   }
   if (!providerReady()) {
-    state.monitorStatus = `Connect ${state.provider === 'gemini' ? 'Gemini' : 'ChatGPT'} in Settings`;
-    publishState();
+    if (!pendingSelection.localReview && pendingSelection.localReviewPromise) {
+      try { pendingSelection.localReview = await pendingSelection.localReviewPromise; }
+      catch (error) { pendingSelection.localReview = { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.' }; }
+    }
+    if (!pendingSelection.localReview) {
+      try {
+        const reviewPromise = proofreadLocally(snapshot.text);
+        pendingSelection.localReviewPromise = reviewPromise;
+        pendingSelection.localReview = await reviewPromise;
+      }
+      catch (error) { pendingSelection.localReview = { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.' }; }
+    }
+    if (revision !== monitorRevision || !pendingSelection?.monitor) return;
+    currentResult = pendingSelection.localReview.correctedText || snapshot.text;
+    state.monitorStatus = pendingSelection.localReview.findings.length ? 'Offline suggestions ready to review' : pendingSelection.localReview.reason || 'Local check found no likely issues';
+    assistantState('done', { action: 'On-device English check', localOnly: true, unchanged: currentResult === snapshot.text });
     return;
   }
   try {
@@ -683,8 +727,18 @@ async function transform(action) {
     publishState();
   } catch (error) {
     if (pendingSelection === selection && !controller.signal.aborted) {
-      if (selection.monitor) state.monitorStatus = error.message || 'Could not check this field';
-      assistantState('error', { message: error.message || 'The request did not complete. Nothing was changed.' });
+      if (selection.monitor && !selection.localReview) {
+        try { selection.localReview = selection.localReviewPromise ? await selection.localReviewPromise : await proofreadLocally(selection.text); }
+        catch { selection.localReview = undefined; }
+      }
+      if (selection.monitor && selection.localReview) {
+        currentResult = selection.localReview.correctedText || selection.text;
+        state.monitorStatus = selection.localReview.findings.length ? 'AI check unavailable; showing on-device findings' : 'AI check unavailable; no likely local issue found';
+        assistantState('done', { action: 'On-device English check', localOnly: true, unchanged: currentResult === selection.text, message: error.message || '' });
+      } else {
+        if (selection.monitor) state.monitorStatus = error.message || 'Could not check this field';
+        assistantState('error', { message: error.message || 'The request did not complete. Nothing was changed.' });
+      }
       publishState();
     }
   } finally {
@@ -965,6 +1019,7 @@ else {
     startup('main window loaded');
     await createAssistantWindow();
     startup('assistant loaded');
+    void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
     await createTray();
     startup('tray ready');
     if (!registerShortcut()) state.notice = 'The shortcut is in use. Change it in ClearWrite settings.';
@@ -978,5 +1033,5 @@ else {
   });
 }
 
-app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
+app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
 app.on('window-all-closed', () => {});

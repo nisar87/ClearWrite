@@ -5,6 +5,7 @@ ClearWrite is a Windows desktop writing assistant. It offers automatic proofread
 ## Features
 
 - **Live writing monitor:** off by default. When enabled, it observes editable UI Automation value fields and waits for a detected text change and a short pause before requesting a suggestion. Read-only documents, password fields, and excluded apps are ignored.
+- **Hybrid proofreading:** an on-device English spelling and grammar pass runs first. When an AI provider is connected, its context-aware review runs after you pause; without a provider, safe local suggestions remain available. ClearWrite never applies a correction automatically.
 - **Per-app controls:** use a blocklist, or enable an allowlist so only selected apps are monitored. The current focused app can be added from the Live writing page. Pause monitoring for one hour or until tomorrow from the app or tray.
 - **Manual shortcut:** select text and press `Ctrl+Shift+Space` to open the assistant. The shortcut continues to work when live monitoring is paused.
 - **Review before use:** see the original and suggested text, with changes highlighted. Copy a suggestion or apply it in supported single-line fields. Full-document controls are copy-only to avoid replacing an entire document unintentionally.
@@ -53,6 +54,7 @@ You can also run `start-clearwrite.cmd` after installing dependencies; it sets l
 - Live monitoring is disabled by default. When enabled, it sends the text of an editable field to the selected provider after a detected change and pause. UI Automation cannot always distinguish a person's keystrokes from an app changing an editable field, so exclude sensitive apps and keep monitoring paused when it is not needed. Manual actions send only the selected text and chosen action. Review each suggestion; ClearWrite never applies a live suggestion automatically.
 - Automatic monitoring ignores password fields, read-only document controls, and by default ClearWrite, Command Prompt, PowerShell, Windows Terminal, and Registry Editor. Additional process names can be excluded in Settings.
 - When the allowlist is enabled, ClearWrite compares the focused app's process name with the list before reading the field text. Non-allowed app text is not read or sent to a provider.
+- The on-device checker uses Harper (`harper.js`, Apache-2.0) and currently checks English only, using Indian English conventions. It declines obvious non-English or uncertain text; supported English text remains on the device during this pass. AI review, when enabled and connected, sends the field text to the selected provider after a pause.
 - ClearWrite does not keep a draft history. Provider processing and retention are governed by the provider's terms and settings.
 - Keep `data/`, `cache/`, `.env` files, and local logs private. They are excluded by `.gitignore`; do not force-add them to a public repository.
 

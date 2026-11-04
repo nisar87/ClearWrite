@@ -61,12 +61,16 @@ function render(state) {
   latest = state;
   const waiting = state.status === 'waiting';
   const working = state.status === 'working';
-  $('selected-text').textContent = state.text || 'No text captured. Select text in another app and try again.';
+  $('selected-text').textContent = state.text || (state.monitor
+    ? 'Click into an editable text field to continue.'
+    : 'No text captured. Select text in another app and try again.');
   $('source-label').textContent = state.monitor ? (state.replaceSupported ? 'ACTIVE FIELD' : 'ACTIVE DOCUMENT') : 'YOUR SELECTION';
   $('selection-counter').textContent = state.text ? `${state.text.length.toLocaleString()} characters` : '';
   $('assistant-dot').classList.toggle('on', Boolean(state.connected));
   $('provider-label').textContent = state.localOnly
     ? 'Checked on this device; no text was sent to an AI provider'
+    : state.monitor && !state.text
+      ? 'Waiting for an editable text field'
     : state.monitor
       ? `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} after a pause`
       : `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} only after your choice`;

@@ -1,8 +1,9 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, safeStorage, screen, shell, Tray } from 'electron';
 import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
-import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isPendingMonitorTextEdit, isSamePendingMonitorText, isEligibleMonitorField, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
+import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
+import { createMonitorSession, transitionMonitorSession } from './monitor-session.js';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -28,13 +29,13 @@ let activeRequest;
 let liveRequest;
 let focusMonitor;
 let monitorTimer;
-let monitorInactiveTimer;
 let monitorResumeTimer;
 let localReviewTimer;
-let monitorRevision = 0;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
 let appliedMonitorSnapshot;
+let monitorSession = createMonitorSession();
+let providerStateReady = false;
 let pendingSelection;
 let currentResult = '';
 let geminiApiKey = '';
@@ -282,36 +283,116 @@ function monitorPauseLabel() {
   return `Paused until ${new Date(state.monitorPausedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 }
 
-function cancelMonitorWork(hide = true) {
+function clearMonitorTimers() {
   clearTimeout(monitorTimer);
-  clearTimeout(monitorInactiveTimer);
   clearTimeout(localReviewTimer);
   monitorTimer = undefined;
-  monitorInactiveTimer = undefined;
   localReviewTimer = undefined;
-  monitorRevision += 1;
+}
+
+function cancelMonitorWork(hide = true) {
+  clearMonitorTimers();
   if (pendingSelection?.monitor) {
     activeRequest?.abort();
     pendingSelection = undefined;
     currentResult = '';
-    if (hide) assistantWindow?.hide();
   }
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'clear' });
+  if (hide) assistantWindow?.hide();
+}
+
+function enterMonitorSearch(action = 'Looking for an editable text field…') {
+  clearTimeout(monitorTimer);
+  clearTimeout(localReviewTimer);
+  monitorTimer = undefined;
+  localReviewTimer = undefined;
+  if (pendingSelection?.monitor) activeRequest?.abort();
+  pendingSelection = undefined;
+  currentResult = '';
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'searching' });
+  state.monitorStatus = action;
+  assistantState('waiting', { monitor: true, text: '', action });
+  publishState();
+}
+
+function monitorSelection(snapshot, reviewPending = false) {
+  return {
+    text: snapshot.text,
+    target: snapshot.target,
+    runtimeId: snapshot.runtimeId,
+    x: snapshot.x,
+    y: snapshot.y,
+    width: snapshot.width,
+    height: snapshot.height,
+    key: snapshot.key,
+    processName: snapshot.processName,
+    replaceSupported: Boolean(snapshot.replaceSupported),
+    monitor: true,
+    reviewPending,
+  };
+}
+
+function dismissMonitorPanel() {
+  if (pendingSelection?.monitor) {
+    clearMonitorTimers();
+    activeRequest?.abort();
+    pendingSelection.reviewPending = false;
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'dismiss' });
+  }
+  assistantWindow?.hide();
+}
+
+async function bringBackMonitorPanel() {
+  if (pendingSelection?.monitor && monitorSession.snapshot) {
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'restore' });
+    const revision = monitorSession.revision;
+    if (currentResult) {
+      assistantState('done', { action: 'Suggestion ready to review', unchanged: currentResult === pendingSelection.text });
+    } else {
+      assistantState('waiting', { action: 'Ready when you type…' });
+    }
+    await showMonitorPanel(monitorSession.snapshot, revision, true);
+    return;
+  }
+
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'restore' });
+  await createAssistantWindow();
+  const point = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(point).workArea;
+  const width = 390, height = 530;
+  const x = Math.max(area.x + 8, Math.min(point.x, area.x + area.width - width - 8));
+  const y = Math.max(area.y + 8, Math.min(point.y, area.y + area.height - height - 8));
+  assistantWindow.setPosition(x, y);
+  assistantState('waiting', { monitor: true, text: '', action: 'Click into a text field to start…' });
+  if (!assistantWindow.isVisible()) {
+    assistantWindow.setAlwaysOnTop(true);
+    assistantWindow.showInactive();
+    assistantWindow.moveTop();
+    void raiseWindowWithoutFocus(assistantNativeHandle()).catch(() => {});
+  }
+}
+
+function scheduleMonitorReview(snapshot, revision, delay = 700) {
+  clearTimeout(monitorTimer);
+  monitorTimer = setTimeout(() => {
+    monitorTimer = undefined;
+    void requestMonitorProofread(snapshot, revision);
+  }, delay);
 }
 
 function handleFocusSnapshot(snapshot) {
   if (!monitoringActive()) return;
   if (snapshot?.processName && snapshot.processName !== 'clearwrite') state.lastFocusedApp = snapshot.processName;
   if (snapshot?.reason === 'appDetected') {
+    if (pendingSelection && !pendingSelection.monitor && assistantWindow?.isVisible()) return;
     const sameFieldApp = pendingSelection?.monitor && snapshot.processName === pendingSelection.processName;
     const returningToClearWrite = snapshot.processName === 'clearwrite';
-    if (pendingSelection?.monitor && !sameFieldApp && !returningToClearWrite) cancelMonitorWork();
-    state.monitorStatus = pendingSelection?.monitor ? 'Suggestion ready to review' : 'Waiting for a text field';
-    publishState();
+    if (returningToClearWrite || sameFieldApp) return;
+    enterMonitorSearch('Switching apps…');
     return;
   }
   if (snapshot?.active && !isProcessAllowed(snapshot.processName, state.restrictToAllowedApps, state.allowedApps, state.excludedApps)) {
-    clearTimeout(monitorTimer);
-    if (pendingSelection?.monitor) cancelMonitorWork();
+    cancelMonitorWork(true);
     state.monitorStatus = DEFAULT_EXCLUDED_PROCESSES.includes(snapshot.processName) || state.excludedApps.includes(snapshot.processName)
       ? 'Suggestions are disabled for this app'
       : 'This app is not in your allowlist';
@@ -320,8 +401,6 @@ function handleFocusSnapshot(snapshot) {
   }
   if (pendingSelection && !pendingSelection.monitor && assistantWindow?.isVisible()) return;
   if (!snapshot?.active) {
-    clearTimeout(monitorTimer);
-    monitorTimer = undefined;
     if (snapshot?.reason === 'password') {
       lastMonitorKey = '';
       cancelMonitorWork();
@@ -329,40 +408,19 @@ function handleFocusSnapshot(snapshot) {
       publishState();
       return;
     }
-    state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Reading field; suggestions wait until you type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : snapshot?.reason === 'notAllowed' ? 'This app is not in your allowlist' : 'Checking focus…';
-    publishState();
-    clearTimeout(monitorInactiveTimer);
-    monitorInactiveTimer = setTimeout(() => {
-      if (assistantWindow?.isVisible() && assistantWindow.isFocused()) {
-        state.monitorStatus = 'Suggestion ready to review';
-        publishState();
-        return;
-      }
-      if (pendingSelection?.monitor && (busy || currentResult)) {
-        state.monitorStatus = currentResult ? 'Suggestion ready to review' : 'AI is reviewing your text';
-        publishState();
-        return;
-      }
-      lastMonitorKey = '';
-      cancelMonitorWork();
-      state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : snapshot?.reason === 'notAllowed' ? 'This app is not in your allowlist' : 'Waiting for a text field';
-      publishState();
-    }, 1800);
-    return;
-  }
-  clearTimeout(monitorInactiveTimer);
-  monitorInactiveTimer = undefined;
-  clearTimeout(localReviewTimer);
-  localReviewTimer = undefined;
-  const trimmedText = typeof snapshot.text === 'string' ? snapshot.text.trim() : '';
-  if (typeof snapshot.text !== 'string' || snapshot.text.length > 6000) {
-    clearTimeout(monitorTimer);
-    if (pendingSelection?.monitor) activeRequest?.abort();
-    monitorRevision += 1;
-    state.monitorStatus = 'Field is too long to check';
+    if (monitorTimer !== undefined) {
+      clearTimeout(monitorTimer);
+      monitorTimer = undefined;
+    }
+    state.monitorStatus = 'Waiting for an editable text field';
     publishState();
     return;
   }
+  if (!isEligibleMonitorField(snapshot)) {
+    enterMonitorSearch(snapshot?.tooLong ? 'This field is too long to check' : 'Waiting for an editable text field…');
+    return;
+  }
+
   if (appliedMonitorSnapshot?.key === snapshot.key && appliedMonitorSnapshot?.text === snapshot.text) {
     appliedMonitorSnapshot = undefined;
     lastMonitorKey = snapshot.key;
@@ -371,108 +429,56 @@ function handleFocusSnapshot(snapshot) {
     return;
   }
   appliedMonitorSnapshot = undefined;
-  if (pendingSelection?.monitor && isSamePendingMonitorText(snapshot, pendingSelection)) {
-    state.monitorStatus = currentResult
-      ? 'Suggestion ready to review'
-      : !pendingSelection.reviewPending
-        ? 'Ready when you type'
-        : activeRequest
-        ? 'Reviewing your sentence…'
-        : 'Checking after you pause…';
-    publishState();
-    if (pendingSelection.reviewPending && !activeRequest && !currentResult && monitorTimer === undefined) {
-      const revision = monitorRevision;
-      const pending = pendingSelection;
-      monitorTimer = setTimeout(() => {
-        monitorTimer = undefined;
-        void requestMonitorProofread(pending, revision);
-      }, 250);
-    }
-    return;
-  }
-  const resumedTextEdit = isPendingMonitorTextEdit(snapshot, pendingSelection);
-  if (!isUserEditSnapshot(snapshot) && !resumedTextEdit) {
-    if (isEligibleMonitorField(snapshot)) {
-      clearTimeout(monitorTimer);
-      clearTimeout(localReviewTimer);
-      activeRequest?.abort();
-      const revision = ++monitorRevision;
-      pendingSelection = {
-        text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId,
-        x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height,
-        key: snapshot.key, processName: snapshot.processName,
-        replaceSupported: Boolean(snapshot.replaceSupported), monitor: true, reviewPending: false,
-      };
-      currentResult = '';
-      state.monitorStatus = 'Ready when you type';
-      assistantState('waiting', { action: 'Ready when you type…' });
-      publishState();
-      void showMonitorPanel(snapshot, revision, true);
-      return;
-    }
-    clearTimeout(monitorTimer);
-    if (pendingSelection?.monitor) {
-      activeRequest?.abort();
-      pendingSelection = undefined;
-      currentResult = '';
-      assistantWindow?.hide();
-    }
-    monitorRevision += 1;
-    lastMonitorKey = snapshot.key;
-    state.monitorStatus = 'Waiting for you to type';
-    publishState();
-    return;
-  }
-  if (!isLiveProofreadCandidate(snapshot, pendingSelection)) {
-    if (isEligibleMonitorField(snapshot)) {
-      clearTimeout(monitorTimer);
-      clearTimeout(localReviewTimer);
-      activeRequest?.abort();
-      const revision = ++monitorRevision;
-      lastMonitorKey = snapshot.key;
-      pendingSelection = {
-        text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId,
-        x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height,
-        key: snapshot.key, processName: snapshot.processName,
-        replaceSupported: Boolean(snapshot.replaceSupported), monitor: true, reviewPending: false,
-      };
-      currentResult = '';
-      state.monitorStatus = 'Ready when you type';
-      assistantState('waiting', { action: 'Ready when you type…' });
-      publishState();
-      void showMonitorPanel(snapshot, revision, true);
-      return;
-    }
+  const previousSelection = pendingSelection?.monitor ? pendingSelection : undefined;
+  const fieldChanged = !previousSelection || previousSelection.key !== snapshot.key;
+  const textChanged = Boolean(previousSelection && previousSelection.text !== snapshot.text);
+  const edited = isUserEditSnapshot(snapshot) || textChanged;
+  const wasSearching = monitorSession.phase === 'searching' || monitorSession.phase === 'idle';
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'field', snapshot, edited });
+  const revision = monitorSession.revision;
+  const contextChanged = fieldChanged || textChanged || wasSearching;
+
+  if (contextChanged) {
     clearTimeout(monitorTimer);
     clearTimeout(localReviewTimer);
-    activeRequest?.abort();
-    monitorRevision += 1;
+    monitorTimer = undefined;
+    localReviewTimer = undefined;
+    if (previousSelection) activeRequest?.abort();
+    currentResult = '';
+    pendingSelection = monitorSelection(snapshot);
     lastMonitorKey = snapshot.key;
-    if (pendingSelection?.monitor) {
-      pendingSelection = undefined;
-      currentResult = '';
-      assistantWindow?.hide();
-    }
-    state.monitorStatus = 'Waiting for a sentence to check';
+  } else if (previousSelection) {
+    pendingSelection = { ...previousSelection, ...monitorSelection(snapshot, previousSelection.reviewPending) };
+  }
+
+  if (monitorSession.phase === 'dismissed') {
     publishState();
     return;
   }
+
+  if (!edited || !isLiveProofreadCandidate(snapshot, previousSelection)) {
+    if (!edited && !contextChanged && ['reviewing', 'suggestion'].includes(monitorSession.phase)) return;
+    state.monitorStatus = 'Ready when you type';
+    assistantState('waiting', { action: 'Ready when you type…' });
+    publishState();
+    void showMonitorPanel(snapshot, revision, fieldChanged || wasSearching);
+    if (!edited && pendingSelection?.reviewPending && !activeRequest && !currentResult && monitorTimer === undefined) {
+      scheduleMonitorReview(snapshot, revision, 250);
+    }
+    return;
+  }
+
   clearTimeout(monitorTimer);
+  clearTimeout(localReviewTimer);
   activeRequest?.abort();
-  const revision = ++monitorRevision;
-  lastMonitorKey = snapshot.key;
-  pendingSelection = { text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, processName: snapshot.processName, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true, reviewPending: true };
-  currentResult = '';
-  state.monitorStatus = trimmedText.length < 3 ? 'Type at least 3 characters to get suggestions' : 'Checking after you pause…';
-  assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Checking on this device…' });
+  pendingSelection = monitorSelection(snapshot, true);
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'field', snapshot, edited: true });
+  state.monitorStatus = 'Checking after you pause…';
+  assistantState('waiting', { action: 'Checking on this device…' });
   publishState();
-  void showMonitorPanel(snapshot, revision);
-  if (trimmedText.length >= 3) localReviewTimer = setTimeout(() => { void updateLocalReview(snapshot, revision); }, 120);
-  if (trimmedText.length < 3) return;
-  monitorTimer = setTimeout(async () => {
-    monitorTimer = undefined;
-    await requestMonitorProofread(snapshot, revision);
-  }, 700);
+  void showMonitorPanel(snapshot, revision, fieldChanged || wasSearching);
+  localReviewTimer = setTimeout(() => { void updateLocalReview(snapshot, revision); }, 120);
+  scheduleMonitorReview(snapshot, revision);
 }
 
 async function updateLocalReview(snapshot, revision) {
@@ -480,18 +486,19 @@ async function updateLocalReview(snapshot, revision) {
     const reviewPromise = pendingSelection?.localReviewPromise || proofreadMonitorText(snapshot.text);
     pendingSelection.localReviewPromise = reviewPromise;
     const review = await reviewPromise;
-    if (revision !== monitorRevision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
+    if (revision !== monitorSession.revision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
     pendingSelection.localReview = review;
     if (activeRequest) assistantState('working', { action: 'AI is reviewing the text…' });
-    else if (!providerReady() && monitorTimer === undefined) {
+    else if (providerStateReady && !providerReady() && monitorTimer === undefined) {
       currentResult = review.correctedText || snapshot.text;
+      monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision });
       state.monitorStatus = review.findings.length ? 'Offline suggestions ready to review' : review.reason || 'Local check found no likely issues';
       assistantState('done', { action: 'On-device English check', localOnly: true, unchanged: currentResult === snapshot.text });
     }
     else if (currentResult) assistantState('done', { action: 'AI correction', unchanged: currentResult === snapshot.text });
     else assistantState('waiting', { action: 'On-device check ready; waiting for you to pause…' });
   } catch (error) {
-    if (revision !== monitorRevision || !pendingSelection?.monitor) return;
+    if (revision !== monitorSession.revision || !pendingSelection?.monitor) return;
     pendingSelection.localReview = { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.' };
     assistantState(activeRequest ? 'working' : 'waiting', { action: activeRequest ? 'AI is reviewing the text…' : 'Waiting for you to pause…' });
   }
@@ -506,7 +513,7 @@ async function proofreadMonitorText(text) {
 async function showMonitorPanel(snapshot, revision, reposition = false) {
   try {
     await createAssistantWindow();
-    if (revision !== monitorRevision || !pendingSelection?.monitor) return;
+    if (revision !== monitorSession.revision || !pendingSelection?.monitor || monitorSession.phase === 'dismissed') return;
     const alreadyVisible = assistantWindow.isVisible();
     if (reposition || !alreadyVisible) {
       const position = assistantPosition(snapshot);
@@ -517,13 +524,15 @@ async function showMonitorPanel(snapshot, revision, reposition = false) {
       assistantWindow.showInactive();
       assistantWindow.moveTop();
     }
-    const waitingAction = snapshot.text.trim().length < 3
-      ? 'Type at least 3 characters…'
-      : pendingSelection?.reviewPending ? 'Checking on this device…' : 'Ready when you type…';
-    assistantState('waiting', { action: waitingAction });
+    if (!['reviewing', 'suggestion'].includes(monitorSession.phase)) {
+      const waitingAction = snapshot.text.trim().length < 3
+        ? 'Type at least 3 characters…'
+        : pendingSelection?.reviewPending ? 'Checking on this device…' : 'Ready when you type…';
+      assistantState('waiting', { action: waitingAction });
+    }
     if (!alreadyVisible) void raiseWindowWithoutFocus(assistantNativeHandle()).catch(() => {});
   } catch (error) {
-    if (revision === monitorRevision) {
+    if (revision === monitorSession.revision) {
       state.monitorStatus = error.message || 'Could not show the suggestion panel';
       publishState();
     }
@@ -531,11 +540,16 @@ async function showMonitorPanel(snapshot, revision, reposition = false) {
 }
 
 async function requestMonitorProofread(snapshot, revision) {
-  if (!monitoringActive() || revision !== monitorRevision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
+  if (!monitoringActive() || revision !== monitorSession.revision || !pendingSelection?.monitor || pendingSelection.key !== snapshot.key || pendingSelection.text !== snapshot.text) return;
+  if (!providerStateReady) {
+    monitorTimer = setTimeout(() => { void requestMonitorProofread(snapshot, revision); }, 250);
+    return;
+  }
   if (busy) {
     monitorTimer = setTimeout(() => { void requestMonitorProofread(snapshot, revision); }, 250);
     return;
   }
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'reviewing', revision });
   pendingSelection.reviewPending = false;
   if (!providerReady()) {
     if (!pendingSelection.localReview && pendingSelection.localReviewPromise) {
@@ -550,18 +564,19 @@ async function requestMonitorProofread(snapshot, revision) {
       }
       catch (error) { pendingSelection.localReview = { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.' }; }
     }
-    if (revision !== monitorRevision || !pendingSelection?.monitor) return;
+    if (revision !== monitorSession.revision || !pendingSelection?.monitor) return;
     currentResult = pendingSelection.localReview.correctedText || snapshot.text;
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision });
     state.monitorStatus = pendingSelection.localReview.findings.length ? 'Offline suggestions ready to review' : pendingSelection.localReview.reason || 'Local check found no likely issues';
     assistantState('done', { action: 'On-device English check', localOnly: true, unchanged: currentResult === snapshot.text });
     return;
   }
   try {
     await createAssistantWindow();
-    if (revision !== monitorRevision) return;
-    if (revision === monitorRevision) await transform('correct');
+    if (revision !== monitorSession.revision) return;
+    if (revision === monitorSession.revision) await transform('correct');
   } catch (error) {
-    if (revision !== monitorRevision) return;
+    if (revision !== monitorSession.revision) return;
     state.monitorStatus = error.message || 'Could not check this field';
     publishState();
   }
@@ -713,11 +728,16 @@ async function begin() {
     const text = clipboard.readText();
     const copied = selection.after !== selection.before;
     if (!copied || !text) {
+      if (monitoringActive()) {
+        await bringBackMonitorPanel();
+        return;
+      }
       state.notice = 'Select text first, then press the ClearWrite shortcut.';
       publishState();
       return;
     }
     if (text.length > 60_000) throw new Error('That selection is too long. Select a smaller passage.');
+    if (pendingSelection?.monitor) cancelMonitorWork(false);
     pendingSelection = { text, target: selection.target, x: selection.x, y: selection.y };
     currentResult = '';
     await createAssistantWindow();
@@ -727,6 +747,10 @@ async function begin() {
     assistantWindow.focus();
     assistantState('ready');
   } catch (error) {
+    if (monitoringActive() && !pendingSelection) {
+      await bringBackMonitorPanel();
+      return;
+    }
     state.notice = error.message || 'Could not read the selected text.';
     publishState();
   } finally {
@@ -768,6 +792,7 @@ async function transform(action) {
   if (!providerReady()) throw new Error(state.provider === 'gemini' ? 'Add and verify your Gemini API key in ClearWrite settings first.' : 'Connect ChatGPT plan usage in ClearWrite settings first.');
   if (!state.selectedModel || !state.models.some((model) => model.slug === state.selectedModel)) throw new Error(`No ${state.provider === 'gemini' ? 'Gemini' : 'ChatGPT'} model is available for this connection.`);
   const selection = pendingSelection;
+  const monitorRequestRevision = selection.monitor ? monitorSession.revision : undefined;
   const provider = state.provider;
   const model = state.selectedModel;
   const controller = new AbortController();
@@ -800,7 +825,10 @@ async function transform(action) {
       ? preserveOuterWhitespace(selection.text, appendContinuation(selection.text.trim(), output))
       : preserveOuterWhitespace(selection.text, output);
     if (!currentResult) throw new Error(`${provider === 'gemini' ? 'Gemini' : 'ChatGPT'} returned an empty suggestion.`);
-    if (selection.monitor) state.monitorStatus = currentResult === selection.text ? 'No correction needed' : 'Suggestion ready to review';
+    if (selection.monitor) {
+      monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision: monitorRequestRevision });
+      state.monitorStatus = currentResult === selection.text ? 'No correction needed' : 'Suggestion ready to review';
+    }
     assistantState('done', { action: actions[action].label, replyOnly: action === 'reply', unchanged: currentResult === selection.text });
     if (selection.monitor && currentResult === selection.text) {
       state.monitorStatus = 'No correction needed';
@@ -825,10 +853,14 @@ async function transform(action) {
       }
       if (selection.monitor && selection.localReview) {
         currentResult = selection.localReview.correctedText || selection.text;
+        monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision: monitorRequestRevision });
         state.monitorStatus = selection.localReview.findings.length ? 'AI check unavailable; showing on-device findings' : 'AI check unavailable; no likely local issue found';
         assistantState('done', { action: 'On-device English check', localOnly: true, unchanged: currentResult === selection.text, message: error.message || '' });
       } else {
-        if (selection.monitor) state.monitorStatus = error.message || 'Could not check this field';
+        if (selection.monitor) {
+          monitorSession = transitionMonitorSession(monitorSession, { type: 'failed', revision: monitorRequestRevision });
+          state.monitorStatus = error.message || 'Could not check this field';
+        }
         assistantState('error', { message: error.message || 'The request did not complete. Nothing was changed.' });
       }
       publishState();
@@ -921,6 +953,7 @@ async function replaceSelection() {
     pendingSelection.text = currentResult;
     pendingSelection.reviewPending = false;
     pendingSelection.localReview = undefined;
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'applied', revision: monitorSession.revision, text: currentResult });
     state.monitorStatus = 'Correction applied';
     assistantState('done', { action: 'Correction applied', unchanged: false });
   }
@@ -1015,11 +1048,14 @@ handle('assistant:update-result', (value) => {
   currentResult = value;
 });
 handle('assistant:dismiss', () => {
-  assistantWindow?.hide();
-  if (pendingSelection && !pendingSelection.monitor) { pendingSelection = undefined; currentResult = ''; }
+  if (pendingSelection?.monitor) dismissMonitorPanel();
+  else {
+    assistantWindow?.hide();
+    if (pendingSelection) { pendingSelection = undefined; currentResult = ''; }
+  }
 });
 handle('assistant:cancel', () => {
-  if (pendingSelection?.monitor) activeRequest?.abort();
+  if (pendingSelection?.monitor) { dismissMonitorPanel(); return; }
   else { activeRequest?.abort(); pendingSelection = undefined; currentResult = ''; }
   assistantWindow?.hide();
 });
@@ -1078,6 +1114,7 @@ function updateTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open ClearWrite', click: () => void showMain() },
+    { label: 'Show writing panel', click: () => void bringBackMonitorPanel() },
     { label: 'Monitor focused writing', type: 'checkbox', checked: monitoringActive(), click: (item) => { void setMonitorEnabled(item.checked); } },
     { label: 'Pause monitoring for 1 hour', enabled: state.monitorEnabled, click: () => void pauseMonitoring('hour') },
     { label: 'Pause monitoring until tomorrow', enabled: state.monitorEnabled, click: () => void pauseMonitoring('tomorrow') },
@@ -1119,8 +1156,14 @@ else {
     await createTray();
     startup('tray ready');
     if (!registerShortcut()) state.notice = 'The shortcut is in use. Change it in ClearWrite settings.';
-    await refreshState();
     startFocusMonitor();
+    void refreshState().then(() => {
+      providerStateReady = true;
+    }).catch((error) => {
+      providerStateReady = true;
+      state.notice = error.message || 'Could not refresh provider state.';
+      publishState();
+    });
     app.on('activate', () => void showMain());
   }).catch((error) => {
     startup(`startup error: ${error?.stack || error}`);

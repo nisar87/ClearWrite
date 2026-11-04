@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createMonitorSession, transitionMonitorSession } from './monitor-session.js';
+import { createMonitorSession, shouldAutoHideAssistantOnBlur, transitionMonitorSession } from './monitor-session.js';
 
 const field = (key, text, processName = 'teams') => ({ key, text, processName });
+
+test('monitor panel stays available during focus gaps but manual panels still auto-hide', () => {
+  assert.equal(shouldAutoHideAssistantOnBlur({ busy: false, monitoring: true, phase: 'searching', hasMonitorSelection: false }), false);
+  assert.equal(shouldAutoHideAssistantOnBlur({ busy: false, monitoring: true, phase: 'idle', hasMonitorSelection: false }), true);
+  assert.equal(shouldAutoHideAssistantOnBlur({ busy: false, monitoring: false, phase: 'searching', hasMonitorSelection: false }), true);
+  assert.equal(shouldAutoHideAssistantOnBlur({ busy: false, monitoring: true, phase: 'focused', hasMonitorSelection: true }), false);
+  assert.equal(shouldAutoHideAssistantOnBlur({ busy: true, monitoring: false, phase: 'idle', hasMonitorSelection: false }), false);
+});
 
 test('focus and edits move through explicit phases with stale reviews invalidated', () => {
   let session = createMonitorSession();

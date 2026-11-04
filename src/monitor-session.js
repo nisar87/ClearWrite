@@ -10,6 +10,11 @@ export function createMonitorSession() {
   };
 }
 
+export function shouldAutoHideAssistantOnBlur({ busy, monitoring, phase, hasMonitorSelection }) {
+  if (busy || hasMonitorSelection) return false;
+  return !(monitoring && phase === 'searching');
+}
+
 export function transitionMonitorSession(session, event) {
   switch (event.type) {
     case 'field': {

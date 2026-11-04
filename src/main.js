@@ -3,7 +3,7 @@ import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
-import { createMonitorSession, transitionMonitorSession } from './monitor-session.js';
+import { createMonitorSession, shouldAutoHideAssistantOnBlur, transitionMonitorSession } from './monitor-session.js';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -197,7 +197,12 @@ async function createAssistantWindow() {
   monitorWindow(assistantWindow, 'assistant');
   assistantWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   assistantWindow.on('blur', () => {
-    if (!busy && !pendingSelection?.monitor) {
+    if (shouldAutoHideAssistantOnBlur({
+      busy,
+      monitoring: monitoringActive(),
+      phase: monitorSession.phase,
+      hasMonitorSelection: Boolean(pendingSelection?.monitor),
+    })) {
       assistantWindow?.hide();
       pendingSelection = undefined;
       currentResult = '';
@@ -782,7 +787,7 @@ async function begin() {
       return;
     }
     if (text.length > 60_000) throw new Error('That selection is too long. Select a smaller passage.');
-    if (pendingSelection?.monitor) cancelMonitorWork(false);
+    if (monitoringActive()) cancelMonitorWork(false);
     pendingSelection = { text, target: selection.target, x: selection.x, y: selection.y };
     currentResult = '';
     await createAssistantWindow();

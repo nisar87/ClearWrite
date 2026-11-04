@@ -31,10 +31,7 @@ let focusMonitor;
 let monitorTimer;
 let monitorResumeTimer;
 let localReviewTimer;
-let focusMonitorWatchdog;
 let focusMonitorRestartTimer;
-let focusMonitorLastHeartbeat = 0;
-let focusMonitorStartedAt = 0;
 let focusMonitorRestartAttempts = 0;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
@@ -643,8 +640,6 @@ function startFocusMonitor() {
     CLEARWRITE_RESTRICT_TO_ALLOWED: String(state.restrictToAllowedApps),
   } });
   focusMonitor = child;
-  focusMonitorLastHeartbeat = Date.now();
-  focusMonitorStartedAt = Date.now();
   monitorLineBuffer = '';
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk) => {
@@ -654,31 +649,16 @@ function startFocusMonitor() {
     for (const line of lines) {
       try {
         const snapshot = JSON.parse(line);
-        if (snapshot.reason === 'heartbeat') {
-          focusMonitorLastHeartbeat = Date.now();
-          if (focusMonitorLastHeartbeat - focusMonitorStartedAt >= 30_000) focusMonitorRestartAttempts = 0;
-          continue;
-        }
+        if (snapshot.reason === 'heartbeat') continue;
         handleFocusSnapshot(snapshot);
       } catch (error) { startup(`focus monitor output parse error: ${error.message}`); }
     }
   });
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => startup(`focus monitor helper error: ${chunk.trim().slice(0, 300)}`));
-  focusMonitorWatchdog = setInterval(() => {
-    if (focusMonitor !== child || Date.now() - focusMonitorLastHeartbeat <= 8_000) return;
-    startup('focus monitor heartbeat timed out; restarting helper');
-    focusMonitor = undefined;
-    clearInterval(focusMonitorWatchdog);
-    focusMonitorWatchdog = undefined;
-    child.kill();
-    scheduleFocusMonitorRestart();
-  }, 1_000);
   child.once('error', (error) => {
     if (focusMonitor !== child) return;
     focusMonitor = undefined;
-    clearInterval(focusMonitorWatchdog);
-    focusMonitorWatchdog = undefined;
     startup(`focus monitor spawn error: ${error.message}`);
     scheduleFocusMonitorRestart();
   });
@@ -689,8 +669,6 @@ function startFocusMonitor() {
       startup(`focus monitor exited (code ${code ?? 'unknown'}, signal ${signal ?? 'none'}); restarting`);
       scheduleFocusMonitorRestart();
     }
-    clearInterval(focusMonitorWatchdog);
-    focusMonitorWatchdog = undefined;
   });
   state.monitorStatus = 'Waiting for a text field';
   publishState();
@@ -710,9 +688,7 @@ function scheduleFocusMonitorRestart() {
 
 function stopFocusMonitor() {
   cancelMonitorWork();
-  clearInterval(focusMonitorWatchdog);
   clearTimeout(focusMonitorRestartTimer);
-  focusMonitorWatchdog = undefined;
   focusMonitorRestartTimer = undefined;
   const child = focusMonitor;
   focusMonitor = undefined;
@@ -1222,5 +1198,5 @@ else {
   });
 }
 
-app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearInterval(focusMonitorWatchdog); clearTimeout(focusMonitorRestartTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
+app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
 app.on('window-all-closed', () => {});

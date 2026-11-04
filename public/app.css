@@ -177,13 +177,6 @@ select, input { min-width: 0; padding: 7px 9px; border: 1px solid #cfd9d5; borde
 .selected-label { display: flex; justify-content: space-between; align-items: center; margin: 12px 0 6px; color: #74817d; font-size: 8px; font-weight: 750; letter-spacing: 0; }
 .selection-counter { color: #97a29e; font-size: 8px; font-weight: 500; letter-spacing: 0; }
 .selected-text { max-height: 74px; overflow: auto; padding: 8px 9px; border: 1px solid #e3e9e6; border-radius: 5px; background: #f8faf9; color: #45534f; font-size: 10px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-.local-review { margin-top: 8px; padding: 7px 8px; border-left: 2px solid var(--teal); background: #f4f8f6; }
-.local-review-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; color: #52615c; font-size: 8px; }
-.local-review-heading strong { flex: 0 0 auto; color: var(--teal-dark); font-size: 8px; }
-.local-review-heading span { text-align: right; line-height: 1.35; }
-.local-review ul { display: grid; gap: 4px; max-height: 72px; overflow: auto; margin: 6px 0 0; padding: 0; list-style: none; }
-.local-review li { display: grid; gap: 2px; color: #52615c; font-size: 8px; line-height: 1.35; }
-.local-review li small { color: #75817d; font-size: 8px; overflow-wrap: anywhere; }
 .actions { display: grid; gap: 11px; margin-top: 12px; }
 .action-group { display: grid; gap: 5px; }
 .action-group-title { color: #84908c; font-size: 9px; font-weight: 730; letter-spacing: 0; }

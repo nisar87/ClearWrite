@@ -70,35 +70,17 @@ function render(state) {
     : state.monitor
       ? `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} after a pause`
       : `Sent to ${state.provider === 'gemini' ? 'Google Gemini' : 'ChatGPT'} only after your choice`;
-  const localReview = state.monitor ? state.localReview : null;
-  $('local-review').classList.toggle('hidden', !localReview);
-  $('local-findings').replaceChildren();
-  if (localReview) {
-    $('local-review-summary').textContent = !localReview.supported
-      ? localReview.reason || 'English check skipped'
-      : localReview.findings.length
-        ? `${localReview.findings.length} possible ${localReview.findings.length === 1 ? 'issue' : 'issues'}`
-        : 'No likely issues found';
-    for (const finding of localReview.findings) {
-      const item = document.createElement('li');
-      const message = document.createElement('span');
-      message.textContent = finding.message;
-      item.append(message);
-      if (finding.suggestions.length) {
-        const suggestion = document.createElement('small');
-        suggestion.textContent = `Suggestion: ${finding.suggestions.join(' / ')}`;
-        item.append(suggestion);
-      }
-      $('local-findings').append(item);
-    }
-  }
   $('actions').classList.toggle('hidden', state.monitor || state.status === 'working' || state.status === 'done');
   $('result-section').classList.toggle('hidden', state.status !== 'done');
   $('working-row').classList.toggle('hidden', !waiting && !working);
   $('working-row').querySelector('.spinner').classList.toggle('hidden', waiting);
   $('cancel-button').classList.toggle('hidden', waiting);
   $('inline-error').textContent = state.status === 'error' ? state.message || '' : '';
-  $('result-state').textContent = state.status === 'done' ? state.localOnly ? 'Offline result' : state.unchanged ? 'No change needed' : 'Review before using' : '';
+  $('result-state').textContent = state.status === 'done'
+    ? state.localOnly
+      ? state.localReview?.findings.length ? `${state.localReview.findings.length} possible offline issue${state.localReview.findings.length === 1 ? '' : 's'}` : 'Offline result'
+      : state.unchanged ? 'No change needed' : 'Review before using'
+    : '';
   if (waiting) $('working-label').textContent = state.action || 'Waiting for you to pause…';
   if (working) $('working-label').textContent = `${state.action || 'Working'}…`;
   if (state.status === 'done' || working) $('result-text').value = state.result || '';

@@ -3,7 +3,7 @@ import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
-import { createMonitorSession, shouldAutoHideAssistantOnBlur, transitionMonitorSession } from './monitor-session.js';
+import { createMonitorSession, shouldAutoHideAssistantOnBlur, shouldRestoreMonitorPanel, transitionMonitorSession } from './monitor-session.js';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -33,6 +33,7 @@ let monitorResumeTimer;
 let localReviewTimer;
 let focusMonitorRestartTimer;
 let focusMonitorRestartAttempts = 0;
+let assistantRestoreTimer;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
 let appliedMonitorSnapshot;
@@ -193,6 +194,23 @@ async function createAssistantWindow() {
   });
   monitorWindow(assistantWindow, 'assistant');
   assistantWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  assistantWindow.on('show', () => startup(`assistant panel shown (phase=${monitorSession.phase})`));
+  assistantWindow.on('hide', () => {
+    const phase = monitorSession.phase;
+    startup(`assistant panel hidden (monitoring=${monitoringActive()}, phase=${phase})`);
+    if (!shouldRestoreMonitorPanel({ monitoring: monitoringActive(), phase })) return;
+    clearTimeout(assistantRestoreTimer);
+    assistantRestoreTimer = setTimeout(() => {
+      assistantRestoreTimer = undefined;
+      if (!assistantWindow?.isVisible() && shouldRestoreMonitorPanel({ monitoring: monitoringActive(), phase: monitorSession.phase })) {
+        if (pendingSelection?.monitor && monitorSession.snapshot) {
+          void showMonitorPanel(monitorSession.snapshot, monitorSession.revision, true);
+        } else {
+          void bringBackMonitorPanel();
+        }
+      }
+    }, 150);
+  });
   assistantWindow.on('blur', () => {
     if (shouldAutoHideAssistantOnBlur({
       busy,
@@ -344,8 +362,8 @@ function dismissMonitorPanel() {
     clearMonitorTimers();
     activeRequest?.abort();
     pendingSelection.reviewPending = false;
-    monitorSession = transitionMonitorSession(monitorSession, { type: 'dismiss' });
   }
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'dismiss' });
   assistantWindow?.hide();
 }
 
@@ -1198,5 +1216,5 @@ else {
   });
 }
 
-app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
+app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); clearTimeout(assistantRestoreTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
 app.on('window-all-closed', () => {});

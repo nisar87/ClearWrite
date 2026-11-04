@@ -15,6 +15,10 @@ export function shouldAutoHideAssistantOnBlur({ busy, monitoring, phase, hasMoni
   return !(monitoring && phase === 'searching');
 }
 
+export function shouldRestoreMonitorPanel({ monitoring, phase }) {
+  return monitoring && ['searching', 'focused', 'editing', 'reviewing', 'suggestion'].includes(phase);
+}
+
 export function transitionMonitorSession(session, event) {
   switch (event.type) {
     case 'field': {

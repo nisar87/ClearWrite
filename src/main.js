@@ -37,6 +37,7 @@ let localReviewTimer;
 let focusMonitorRestartTimer;
 let focusMonitorRestartAttempts = 0;
 let assistantRestoreTimer;
+let panelKeepAboveTimer;
 let monitorLineBuffer = '';
 let lastMonitorKey = '';
 let appliedMonitorSnapshot;
@@ -322,6 +323,7 @@ function clearMonitorTimers() {
 
 function cancelMonitorWork(hide = true) {
   clearMonitorTimers();
+  stopPanelKeepAbove();
   if (pendingSelection?.monitor) {
     activeRequest?.abort();
     pendingSelection = undefined;
@@ -340,6 +342,7 @@ function enterMonitorSearch(action = 'Looking for an editable text field…') {
   pendingSelection = undefined;
   currentResult = '';
   monitorSession = transitionMonitorSession(monitorSession, { type: 'searching' });
+  startPanelKeepAbove();
   state.monitorStatus = action;
   assistantState('waiting', { monitor: true, text: '', action });
   publishState();
@@ -363,6 +366,7 @@ function monitorSelection(snapshot, reviewPending = false) {
 }
 
 function dismissMonitorPanel() {
+  stopPanelKeepAbove();
   if (pendingSelection?.monitor) {
     clearMonitorTimers();
     activeRequest?.abort();
@@ -392,9 +396,9 @@ async function bringBackMonitorPanel() {
   if (!assistantWindow.isVisible()) {
     assistantWindow.setAlwaysOnTop(true);
     assistantWindow.showInactive();
-    assistantWindow.moveTop();
     void raiseWindowWithoutFocus(assistantNativeHandle()).catch(() => {});
   }
+  startPanelKeepAbove();
 }
 
 function scheduleMonitorReview(snapshot, revision, delay = 700) {
@@ -544,8 +548,9 @@ async function showMonitorPanel(snapshot, revision) {
     if (!alreadyVisible) {
       assistantWindow.setAlwaysOnTop(true);
       assistantWindow.showInactive();
-      assistantWindow.moveTop();
+      raiseMonitorPanel();
     }
+    startPanelKeepAbove();
     if (!['reviewing', 'suggestion'].includes(monitorSession.phase)) {
       const waitingAction = snapshot.text.trim().length < 3
         ? 'Type at least 3 characters…'
@@ -641,10 +646,27 @@ function assistantNativeHandle() {
 function raiseMonitorPanel() {
   if (!assistantWindow || assistantWindow.isDestroyed()) return;
   assistantWindow.setAlwaysOnTop(true);
-  assistantWindow.moveTop();
   void raiseWindowWithoutFocus(assistantNativeHandle())
     .then(() => startup('monitor panel promoted without focus'))
     .catch((error) => startup(`could not raise monitor panel: ${error.message}`));
+}
+
+function startPanelKeepAbove() {
+  if (panelKeepAboveTimer || !shouldRestoreMonitorPanel({ monitoring: monitoringActive(), phase: monitorSession.phase })) return;
+  panelKeepAboveTimer = setInterval(() => {
+    if (!shouldRestoreMonitorPanel({ monitoring: monitoringActive(), phase: monitorSession.phase })) {
+      stopPanelKeepAbove();
+      return;
+    }
+    if (!assistantWindow || assistantWindow.isDestroyed()) return;
+    if (!assistantWindow.isVisible()) assistantWindow.showInactive();
+    assistantWindow.setAlwaysOnTop(true);
+  }, 750);
+}
+
+function stopPanelKeepAbove() {
+  clearInterval(panelKeepAboveTimer);
+  panelKeepAboveTimer = undefined;
 }
 
 function startFocusMonitor() {
@@ -887,6 +909,7 @@ async function transform(action) {
         assistantWindow?.showInactive();
       }
       raiseMonitorPanel();
+      startPanelKeepAbove();
     }
     publishState();
   } catch (error) {
@@ -1220,5 +1243,5 @@ else {
   });
 }
 
-app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); clearTimeout(assistantRestoreTimer); clearTimeout(panelBoundsSaveTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
+app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); clearTimeout(assistantRestoreTimer); clearTimeout(panelBoundsSaveTimer); stopPanelKeepAbove(); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
 app.on('window-all-closed', () => {});

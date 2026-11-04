@@ -338,6 +338,11 @@ function handleFocusSnapshot(snapshot) {
         publishState();
         return;
       }
+      if (pendingSelection?.monitor && (busy || currentResult)) {
+        state.monitorStatus = currentResult ? 'Suggestion ready to review' : 'AI is reviewing your text';
+        publishState();
+        return;
+      }
       lastMonitorKey = '';
       cancelMonitorWork();
       state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : snapshot?.reason === 'notAllowed' ? 'This app is not in your allowlist' : 'Waiting for a text field';
@@ -805,9 +810,11 @@ async function transform(action) {
     }
     if (selection.monitor) {
       assistantWindow?.setAlwaysOnTop(true);
-      assistantWindow?.showInactive();
-      assistantWindow?.moveTop();
-      await raiseWindowWithoutFocus(assistantNativeHandle());
+      if (!assistantWindow?.isVisible()) {
+        assistantWindow?.showInactive();
+        assistantWindow?.moveTop();
+        await raiseWindowWithoutFocus(assistantNativeHandle());
+      }
     }
     publishState();
   } catch (error) {

@@ -57,7 +57,7 @@ while ($true) {
         $lastActive = $false
       }
       $readFailures = 0
-      Start-Sleep -Milliseconds 300
+      Start-Sleep -Milliseconds 150
       continue
     }
     $processName = [System.Diagnostics.Process]::GetProcessById($current.ProcessId).ProcessName.ToLowerInvariant()
@@ -74,7 +74,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
-      Start-Sleep -Milliseconds 300
+      Start-Sleep -Milliseconds 150
       continue
     }
     if ($processName -in $excludedProcesses) {
@@ -84,7 +84,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
-      Start-Sleep -Milliseconds 300
+      Start-Sleep -Milliseconds 150
       continue
     }
     $lastSuppressedApp = ''
@@ -95,7 +95,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
-      Start-Sleep -Milliseconds 300
+      Start-Sleep -Milliseconds 150
       continue
     }
     $lastBlockedApp = ''
@@ -116,7 +116,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
-      Start-Sleep -Milliseconds 300
+      Start-Sleep -Milliseconds 150
       continue
     }
 
@@ -156,7 +156,7 @@ while ($true) {
   } catch {
     if ($lastActive) {
       $readFailures += 1
-      if ($readFailures -lt 3) { Start-Sleep -Milliseconds 300; continue }
+      if ($readFailures -lt 3) { Start-Sleep -Milliseconds 150; continue }
       Send-Payload @{ active = $false; reason = 'unsupported' }
     }
     $lastKey = ''
@@ -164,5 +164,5 @@ while ($true) {
     $lastActive = $false
     $readFailures = 0
   }
-  Start-Sleep -Milliseconds 300
+  Start-Sleep -Milliseconds 150
 }

@@ -4,7 +4,7 @@ ClearWrite is a Windows desktop writing assistant. It offers automatic proofread
 
 ## Features
 
-- **Live writing monitor:** off by default. When enabled, it observes editable UI Automation value fields and waits for a detected text change and a short pause before requesting a suggestion. Read-only documents, password fields, and excluded apps are ignored.
+- **Live writing monitor:** off by default. When enabled, it observes editable UI Automation value fields and waits for a detected text change and a short pause before requesting a suggestion. Browser address bars, URL-only input, and text without enough sentence-like content are ignored. Links inside prose are shielded during correction and restored exactly afterward. Read-only documents, password fields, and excluded apps are ignored.
 - **Hybrid proofreading:** an on-device English spelling and grammar pass runs first. When an AI provider is connected, its context-aware review runs after you pause; without a provider, safe local suggestions remain available. ClearWrite never applies a correction automatically.
 - **Per-app controls:** use a blocklist, or enable an allowlist so only selected apps are monitored. The current focused app can be added from the Live writing page. Pause monitoring for one hour or until tomorrow from the app or tray.
 - **Manual shortcut:** select text and press `Ctrl+Shift+Space` to open the assistant. The shortcut continues to work when live monitoring is paused.

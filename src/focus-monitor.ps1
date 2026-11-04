@@ -133,6 +133,8 @@ while ($true) {
         processId = $current.ProcessId
         processName = $processName
         runtimeId = $runtimeId
+        controlName = $current.Name
+        automationId = $current.AutomationId
         editable = $true
         readOnly = $false
         changed = $textChanged

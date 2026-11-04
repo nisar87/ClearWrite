@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendContinuation, hasProofreadableProse, isBrowserAddressField, isLiveProofreadCandidate, isReadyForLiveProofread, isUserEditSnapshot, MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, preserveOuterWhitespace, protectUrls, restoreUrls } from './live-proofread.js';
+import { appendContinuation, hasProofreadableProse, isBrowserAddressField, isLiveProofreadCandidate, isPendingMonitorTextEdit, isReadyForLiveProofread, isSamePendingMonitorText, isUserEditSnapshot, MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, preserveOuterWhitespace, protectUrls, restoreUrls } from './live-proofread.js';
 
 test('live drafts trim surrounding whitespace and wait for enough context', () => {
   assert.equal(prepareLiveDraft('  A short draft.  '), 'A short draft.');
@@ -28,6 +28,17 @@ test('live monitoring ignores URL-only input and browser address bars', () => {
   assert.equal(isLiveProofreadCandidate({ ...edited, text: 'Please fix this sentence', controlName: 'Address and search bar' }), false);
   assert.equal(isBrowserAddressField({ processName: 'msedge.exe', automationId: 'AddressBar' }), true);
   assert.equal(isLiveProofreadCandidate({ ...edited, text: 'Please fix this sentence', controlName: 'Message' }), true);
+});
+
+test('temporary focus recovery keeps unchanged suggestions and detects missed edits', () => {
+  const pending = { monitor: true, key: 'field-1', text: 'The first version is already quite long.' };
+  const resumed = { active: true, changed: false, editable: true, readOnly: false, key: 'field-1', text: pending.text };
+  const changedDuringGap = { ...resumed, text: 'The second version is also long enough.' };
+  assert.equal(isSamePendingMonitorText(resumed, pending), true);
+  assert.equal(isLiveProofreadCandidate(resumed, pending), false);
+  assert.equal(isPendingMonitorTextEdit(changedDuringGap, pending), true);
+  assert.equal(isLiveProofreadCandidate(changedDuringGap, pending), true);
+  assert.equal(isPendingMonitorTextEdit({ ...changedDuringGap, key: 'other-field' }, pending), false);
 });
 
 test('sentence-like text is distinguished from URLs and non-prose', () => {

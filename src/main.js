@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, safeStorage, screen, shell, Tray } from 'electron';
 import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
-import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
+import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isPendingMonitorTextEdit, isSamePendingMonitorText, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
@@ -320,10 +320,6 @@ function handleFocusSnapshot(snapshot) {
   if (!snapshot?.active) {
     clearTimeout(monitorTimer);
     monitorTimer = undefined;
-    if (pendingSelection?.monitor) {
-      activeRequest?.abort();
-      monitorRevision += 1;
-    }
     if (snapshot?.reason === 'password') {
       lastMonitorKey = '';
       cancelMonitorWork();
@@ -344,7 +340,7 @@ function handleFocusSnapshot(snapshot) {
       cancelMonitorWork();
       state.monitorStatus = snapshot?.reason === 'tooLong' ? 'Field is too long to check' : snapshot?.reason === 'readonly' ? 'Waiting for you to type' : snapshot?.reason === 'excludedApp' ? 'Suggestions are disabled for this app' : snapshot?.reason === 'notAllowed' ? 'This app is not in your allowlist' : 'Waiting for a text field';
       publishState();
-    }, 900);
+    }, 1800);
     return;
   }
   clearTimeout(monitorInactiveTimer);
@@ -368,7 +364,25 @@ function handleFocusSnapshot(snapshot) {
     return;
   }
   appliedMonitorSnapshot = undefined;
-  if (!isUserEditSnapshot(snapshot)) {
+  if (pendingSelection?.monitor && isSamePendingMonitorText(snapshot, pendingSelection)) {
+    state.monitorStatus = currentResult
+      ? 'Suggestion ready to review'
+      : activeRequest
+        ? 'Reviewing your sentence…'
+        : 'Checking after you pause…';
+    publishState();
+    if (!activeRequest && !currentResult && monitorTimer === undefined) {
+      const revision = monitorRevision;
+      const pending = pendingSelection;
+      monitorTimer = setTimeout(() => {
+        monitorTimer = undefined;
+        void requestMonitorProofread(pending, revision);
+      }, 250);
+    }
+    return;
+  }
+  const resumedTextEdit = isPendingMonitorTextEdit(snapshot, pendingSelection);
+  if (!isUserEditSnapshot(snapshot) && !resumedTextEdit) {
     clearTimeout(monitorTimer);
     if (pendingSelection?.monitor) {
       activeRequest?.abort();
@@ -382,7 +396,7 @@ function handleFocusSnapshot(snapshot) {
     publishState();
     return;
   }
-  if (!isLiveProofreadCandidate(snapshot)) {
+  if (!isLiveProofreadCandidate(snapshot, pendingSelection)) {
     clearTimeout(monitorTimer);
     clearTimeout(localReviewTimer);
     activeRequest?.abort();

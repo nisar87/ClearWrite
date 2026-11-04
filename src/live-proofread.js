@@ -21,6 +21,18 @@ export function isUserEditSnapshot(snapshot) {
     snapshot.editable === true && snapshot.readOnly === false;
 }
 
+export function isPendingMonitorTextEdit(snapshot, pending) {
+  return pending?.monitor === true && snapshot?.active === true &&
+    snapshot.editable === true && snapshot.readOnly === false &&
+    snapshot.key === pending.key && typeof snapshot.text === 'string' && snapshot.text !== pending.text;
+}
+
+export function isSamePendingMonitorText(snapshot, pending) {
+  return pending?.monitor === true && snapshot?.active === true &&
+    snapshot.editable === true && snapshot.readOnly === false &&
+    snapshot.key === pending.key && snapshot.text === pending.text;
+}
+
 export function isBrowserAddressField(snapshot) {
   const processName = typeof snapshot?.processName === 'string'
     ? snapshot.processName.toLowerCase().replace(/\.exe$/i, '')
@@ -38,8 +50,8 @@ export function hasProofreadableProse(value) {
   return words.length >= 2 && words.filter((word) => word.length >= 2).length >= 2;
 }
 
-export function isLiveProofreadCandidate(snapshot) {
-  return isUserEditSnapshot(snapshot) && !isBrowserAddressField(snapshot) &&
+export function isLiveProofreadCandidate(snapshot, pending) {
+  return (isUserEditSnapshot(snapshot) || isPendingMonitorTextEdit(snapshot, pending)) && !isBrowserAddressField(snapshot) &&
     isReadyForLiveProofread(snapshot.text) && hasProofreadableProse(snapshot.text);
 }
 

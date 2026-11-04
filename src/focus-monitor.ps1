@@ -42,6 +42,14 @@ function Send-Payload($payload) {
   [Console]::Out.WriteLine(($payload | ConvertTo-Json -Compress -Depth 4))
   [Console]::Out.Flush()
 }
+$script:lastHeartbeat = [Environment]::TickCount64
+function Send-HeartbeatIfDue {
+  $now = [Environment]::TickCount64
+  if ($now - $script:lastHeartbeat -ge 1000) {
+    Send-Payload @{ reason = 'heartbeat' }
+    $script:lastHeartbeat = $now
+  }
+}
 
 while ($true) {
   try {
@@ -57,6 +65,7 @@ while ($true) {
         $lastActive = $false
       }
       $readFailures = 0
+      Send-HeartbeatIfDue
       Start-Sleep -Milliseconds 150
       continue
     }
@@ -74,6 +83,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
+      Send-HeartbeatIfDue
       Start-Sleep -Milliseconds 150
       continue
     }
@@ -84,6 +94,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
+      Send-HeartbeatIfDue
       Start-Sleep -Milliseconds 150
       continue
     }
@@ -95,6 +106,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
+      Send-HeartbeatIfDue
       Start-Sleep -Milliseconds 150
       continue
     }
@@ -116,6 +128,7 @@ while ($true) {
       $lastText = $null
       $lastActive = $false
       $readFailures = 0
+      Send-HeartbeatIfDue
       Start-Sleep -Milliseconds 150
       continue
     }
@@ -157,7 +170,7 @@ while ($true) {
   } catch {
     if ($lastActive) {
       $readFailures += 1
-      if ($readFailures -lt 3) { Start-Sleep -Milliseconds 150; continue }
+      if ($readFailures -lt 3) { Send-HeartbeatIfDue; Start-Sleep -Milliseconds 150; continue }
       Send-Payload @{ active = $false; reason = 'unsupported' }
     }
     $lastKey = ''
@@ -165,5 +178,6 @@ while ($true) {
     $lastActive = $false
     $readFailures = 0
   }
+  Send-HeartbeatIfDue
   Start-Sleep -Milliseconds 150
 }

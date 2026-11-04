@@ -4,6 +4,7 @@ import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
 import { createMonitorSession, shouldAutoHideAssistantOnBlur, shouldRestoreMonitorPanel, transitionMonitorSession } from './monitor-session.js';
+import { clampPanelBounds, initialPanelBounds } from './panel-position.js';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -22,6 +23,8 @@ app.setPath('userData', dataDir);
 
 let mainWindow;
 let assistantWindow;
+let panelBounds;
+let panelBoundsSaveTimer;
 let tray;
 let quitting = false;
 let busy = false;
@@ -194,6 +197,8 @@ async function createAssistantWindow() {
   });
   monitorWindow(assistantWindow, 'assistant');
   assistantWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  assistantWindow.on('move', schedulePanelBoundsSave);
+  assistantWindow.on('resize', schedulePanelBoundsSave);
   assistantWindow.on('show', () => startup(`assistant panel shown (phase=${monitorSession.phase})`));
   assistantWindow.on('hide', () => {
     const phase = monitorSession.phase;
@@ -204,7 +209,7 @@ async function createAssistantWindow() {
       assistantRestoreTimer = undefined;
       if (!assistantWindow?.isVisible() && shouldRestoreMonitorPanel({ monitoring: monitoringActive(), phase: monitorSession.phase })) {
         if (pendingSelection?.monitor && monitorSession.snapshot) {
-          void showMonitorPanel(monitorSession.snapshot, monitorSession.revision, true);
+          void showMonitorPanel(monitorSession.snapshot, monitorSession.revision);
         } else {
           void bringBackMonitorPanel();
         }
@@ -376,18 +381,13 @@ async function bringBackMonitorPanel() {
     } else {
       assistantState('waiting', { action: 'Ready when you type…' });
     }
-    await showMonitorPanel(monitorSession.snapshot, revision, true);
+    await showMonitorPanel(monitorSession.snapshot, revision);
     return;
   }
 
   monitorSession = transitionMonitorSession(monitorSession, { type: 'restore' });
   await createAssistantWindow();
-  const point = screen.getCursorScreenPoint();
-  const area = screen.getDisplayNearestPoint(point).workArea;
-  const width = 390, height = 530;
-  const x = Math.max(area.x + 8, Math.min(point.x, area.x + area.width - width - 8));
-  const y = Math.max(area.y + 8, Math.min(point.y, area.y + area.height - height - 8));
-  assistantWindow.setPosition(x, y);
+  placeAssistantPanel();
   assistantState('waiting', { monitor: true, text: '', action: 'Click into a text field to start…' });
   if (!assistantWindow.isVisible()) {
     assistantWindow.setAlwaysOnTop(true);
@@ -486,7 +486,7 @@ function handleFocusSnapshot(snapshot) {
     state.monitorStatus = 'Ready when you type';
     assistantState('waiting', { action: 'Ready when you type…' });
     publishState();
-    void showMonitorPanel(snapshot, revision, fieldChanged || wasSearching);
+    void showMonitorPanel(snapshot, revision);
     if (!edited && pendingSelection?.reviewPending && !activeRequest && !currentResult && monitorTimer === undefined) {
       scheduleMonitorReview(snapshot, revision, 250);
     }
@@ -501,7 +501,7 @@ function handleFocusSnapshot(snapshot) {
   state.monitorStatus = 'Checking after you pause…';
   assistantState('waiting', { action: 'Checking on this device…' });
   publishState();
-  void showMonitorPanel(snapshot, revision, fieldChanged || wasSearching);
+  void showMonitorPanel(snapshot, revision);
   localReviewTimer = setTimeout(() => { void updateLocalReview(snapshot, revision); }, 120);
   scheduleMonitorReview(snapshot, revision);
 }
@@ -535,15 +535,12 @@ async function proofreadMonitorText(text) {
   return { ...review, correctedText: restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) };
 }
 
-async function showMonitorPanel(snapshot, revision, reposition = false) {
+async function showMonitorPanel(snapshot, revision) {
   try {
     await createAssistantWindow();
     if (revision !== monitorSession.revision || !pendingSelection?.monitor || monitorSession.phase === 'dismissed') return;
     const alreadyVisible = assistantWindow.isVisible();
-    if (reposition || !alreadyVisible) {
-      const position = assistantPosition(snapshot);
-      assistantWindow.setPosition(position.x, position.y);
-    }
+    placeAssistantPanel(snapshot);
     if (!alreadyVisible) {
       assistantWindow.setAlwaysOnTop(true);
       assistantWindow.showInactive();
@@ -608,36 +605,31 @@ async function requestMonitorProofread(snapshot, revision) {
   }
 }
 
-function assistantPosition(snapshot) {
-  const displays = screen.getAllDisplays();
-  const candidates = displays.map((display) => {
-    const scale = display.scaleFactor || 1;
-    const field = {
-      x: snapshot.x / scale,
-      y: snapshot.y / scale,
-      width: (snapshot.width || 0) / scale,
-      height: (snapshot.height || 0) / scale,
-    };
-    const bounds = display.bounds;
-    const containsCenter = field.x + field.width / 2 >= bounds.x && field.x + field.width / 2 <= bounds.x + bounds.width &&
-      field.y + field.height / 2 >= bounds.y && field.y + field.height / 2 <= bounds.y + bounds.height;
-    return { display, field, containsCenter };
-  });
-  const { display, field } = candidates.find((candidate) => candidate.containsCenter) || {
-    display: screen.getDisplayNearestPoint({ x: snapshot.x, y: snapshot.y }),
-    field: { x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height },
-  };
-  const area = display.workArea;
-  const width = 390;
-  const height = 530;
-  const minX = area.x + 8;
-  const maxX = Math.max(minX, area.x + area.width - width - 8);
-  const x = Math.max(minX, Math.min(field.x + Math.min(field.width, 24), maxX));
-  const below = field.y + field.height + 8;
-  const preferredY = below + height <= area.y + area.height ? below : field.y - height - 8;
-  const minY = area.y + 8;
-  const maxY = Math.max(minY, area.y + area.height - height - 8);
-  return { x, y: Math.max(minY, Math.min(preferredY, maxY)) };
+function placeAssistantPanel() {
+  if (!assistantWindow || assistantWindow.isDestroyed()) return;
+  if (!panelBounds) {
+    const point = screen.getCursorScreenPoint();
+    panelBounds = initialPanelBounds(point, screen.getDisplayNearestPoint(point).workArea);
+  }
+  panelBounds = clampPanelBounds(panelBounds, screen.getDisplayMatching(panelBounds).workArea);
+  const current = assistantWindow.getBounds();
+  if (current.x !== panelBounds.x || current.y !== panelBounds.y || current.width !== panelBounds.width || current.height !== panelBounds.height) {
+    assistantWindow.setBounds(panelBounds);
+  }
+}
+
+function schedulePanelBoundsSave() {
+  clearTimeout(panelBoundsSaveTimer);
+  panelBoundsSaveTimer = setTimeout(() => {
+    panelBoundsSaveTimer = undefined;
+    if (!assistantWindow || assistantWindow.isDestroyed()) return;
+    const bounds = assistantWindow.getBounds();
+    panelBounds = clampPanelBounds(bounds, screen.getDisplayMatching(bounds).workArea);
+    if (bounds.x !== panelBounds.x || bounds.y !== panelBounds.y || bounds.width !== panelBounds.width || bounds.height !== panelBounds.height) {
+      assistantWindow.setBounds(panelBounds);
+    }
+    void savePreferences();
+  }, 300);
 }
 
 function assistantNativeHandle() {
@@ -795,8 +787,7 @@ async function begin() {
     pendingSelection = { text, target: selection.target, x: selection.x, y: selection.y };
     currentResult = '';
     await createAssistantWindow();
-    const position = assistantPosition(selection);
-    assistantWindow.setPosition(position.x, position.y);
+    placeAssistantPanel();
     assistantWindow.show();
     assistantWindow.focus();
     assistantState('ready');
@@ -1132,6 +1123,9 @@ async function loadPreferences() {
     if (Number.isFinite(raw.monitorPausedUntil) && raw.monitorPausedUntil > Date.now()) state.monitorPausedUntil = raw.monitorPausedUntil;
     if (typeof raw.restrictToAllowedApps === 'boolean') state.restrictToAllowedApps = raw.restrictToAllowedApps;
     if (typeof raw.startupEnabled === 'boolean') state.startupEnabled = raw.startupEnabled;
+    if (raw.panelBounds && ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(raw.panelBounds[key]))) {
+      panelBounds = clampPanelBounds(raw.panelBounds, screen.getDisplayMatching(raw.panelBounds).workArea);
+    }
     if (Array.isArray(raw.excludedApps)) {
       try { state.excludedApps = normalizeProcessNames(raw.excludedApps); } catch { }
     }
@@ -1160,7 +1154,7 @@ async function savePreferences() {
   await mkdir(dataDir, { recursive: true });
   const file = path.join(dataDir, 'preferences.json');
   const temporary = `${file}.${randomUUID()}.tmp`;
-  try { await writeFile(temporary, JSON.stringify({ shortcut: state.shortcut, provider: state.provider, selectedModels, monitorEnabled: state.monitorEnabled, monitorPausedUntil: state.monitorPausedUntil, startupEnabled: state.startupEnabled, excludedApps: state.excludedApps, allowedApps: state.allowedApps, restrictToAllowedApps: state.restrictToAllowedApps, privacyDefaultsVersion: 1 }, null, 2), { flag: 'wx' }); await rename(temporary, file); }
+  try { await writeFile(temporary, JSON.stringify({ shortcut: state.shortcut, provider: state.provider, selectedModels, monitorEnabled: state.monitorEnabled, monitorPausedUntil: state.monitorPausedUntil, startupEnabled: state.startupEnabled, excludedApps: state.excludedApps, allowedApps: state.allowedApps, restrictToAllowedApps: state.restrictToAllowedApps, panelBounds, privacyDefaultsVersion: 1 }, null, 2), { flag: 'wx' }); await rename(temporary, file); }
   finally { await unlink(temporary).catch(() => {}); }
 }
 
@@ -1226,5 +1220,5 @@ else {
   });
 }
 
-app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); clearTimeout(assistantRestoreTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
+app.on('before-quit', () => { quitting = true; clearTimeout(monitorResumeTimer); clearTimeout(localReviewTimer); clearTimeout(focusMonitorRestartTimer); clearTimeout(assistantRestoreTimer); clearTimeout(panelBoundsSaveTimer); activeRequest?.abort(); liveRequest?.abort(); focusMonitor?.kill(); stopLocalProofreader(); globalShortcut.unregisterAll(); tray?.destroy(); chatgpt.cancelSignIn(); });
 app.on('window-all-closed', () => {});

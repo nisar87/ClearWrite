@@ -6,8 +6,8 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/gemini.js && node --check src/live-proofread.js && node --check src/monitor-session.js && node --check src/local-proofread.js && node --check src/local-proofread-worker.js && node --check src/local-proofread.test.js && node --check src/monitoring.js && node --check src/windows-input.js && node --check src/windows-input.test.js && node --check src/gemini.test.js && node --check src/live-proofread.test.js && node --check src/monitor-session.test.js && node --check src/monitoring.test.js && node --check public/app.js && node --check public/assistant.js",
-    "test": "node --test src/windows-input.test.js src/gemini.test.js src/live-proofread.test.js src/monitor-session.test.js src/monitoring.test.js src/local-proofread.test.js"
+    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/gemini.js && node --check src/live-proofread.js && node --check src/monitor-session.js && node --check src/panel-position.js && node --check src/local-proofread.js && node --check src/local-proofread-worker.js && node --check src/local-proofread.test.js && node --check src/monitoring.js && node --check src/windows-input.js && node --check src/windows-input.test.js && node --check src/gemini.test.js && node --check src/live-proofread.test.js && node --check src/monitor-session.test.js && node --check src/panel-position.test.js && node --check src/monitoring.test.js && node --check public/app.js && node --check public/assistant.js",
+    "test": "node --test src/windows-input.test.js src/gemini.test.js src/live-proofread.test.js src/monitor-session.test.js src/panel-position.test.js src/monitoring.test.js src/local-proofread.test.js"
   },
   "dependencies": {
     "@siwc/local": "file:../WritingAssistantDevKit/packages/local",

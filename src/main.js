@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, safeStorage, screen, shell, Tray } from 'electron';
 import { createChatGPT, CHATGPT_USAGE_URL } from '@siwc/local';
 import { listGeminiModels, streamGemini } from './gemini.js';
-import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isPendingMonitorTextEdit, isSamePendingMonitorText, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
+import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isPendingMonitorTextEdit, isSamePendingMonitorText, isEligibleMonitorField, isLiveProofreadCandidate, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { randomUUID } from 'node:crypto';
@@ -302,8 +302,10 @@ function handleFocusSnapshot(snapshot) {
   if (!monitoringActive()) return;
   if (snapshot?.processName && snapshot.processName !== 'clearwrite') state.lastFocusedApp = snapshot.processName;
   if (snapshot?.reason === 'appDetected') {
-    if (pendingSelection?.monitor) cancelMonitorWork();
-    state.monitorStatus = 'Waiting for a text field';
+    const sameFieldApp = pendingSelection?.monitor && snapshot.processName === pendingSelection.processName;
+    const returningToClearWrite = snapshot.processName === 'clearwrite';
+    if (pendingSelection?.monitor && !sameFieldApp && !returningToClearWrite) cancelMonitorWork();
+    state.monitorStatus = pendingSelection?.monitor ? 'Suggestion ready to review' : 'Waiting for a text field';
     publishState();
     return;
   }
@@ -367,11 +369,13 @@ function handleFocusSnapshot(snapshot) {
   if (pendingSelection?.monitor && isSamePendingMonitorText(snapshot, pendingSelection)) {
     state.monitorStatus = currentResult
       ? 'Suggestion ready to review'
-      : activeRequest
+      : !pendingSelection.reviewPending
+        ? 'Ready when you type'
+        : activeRequest
         ? 'Reviewing your sentence…'
         : 'Checking after you pause…';
     publishState();
-    if (!activeRequest && !currentResult && monitorTimer === undefined) {
+    if (pendingSelection.reviewPending && !activeRequest && !currentResult && monitorTimer === undefined) {
       const revision = monitorRevision;
       const pending = pendingSelection;
       monitorTimer = setTimeout(() => {
@@ -383,6 +387,24 @@ function handleFocusSnapshot(snapshot) {
   }
   const resumedTextEdit = isPendingMonitorTextEdit(snapshot, pendingSelection);
   if (!isUserEditSnapshot(snapshot) && !resumedTextEdit) {
+    if (isEligibleMonitorField(snapshot)) {
+      clearTimeout(monitorTimer);
+      clearTimeout(localReviewTimer);
+      activeRequest?.abort();
+      const revision = ++monitorRevision;
+      pendingSelection = {
+        text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId,
+        x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height,
+        key: snapshot.key, processName: snapshot.processName,
+        replaceSupported: Boolean(snapshot.replaceSupported), monitor: true, reviewPending: false,
+      };
+      currentResult = '';
+      state.monitorStatus = 'Ready when you type';
+      assistantState('waiting', { action: 'Ready when you type…' });
+      publishState();
+      void showMonitorPanel(snapshot, revision, true);
+      return;
+    }
     clearTimeout(monitorTimer);
     if (pendingSelection?.monitor) {
       activeRequest?.abort();
@@ -397,6 +419,25 @@ function handleFocusSnapshot(snapshot) {
     return;
   }
   if (!isLiveProofreadCandidate(snapshot, pendingSelection)) {
+    if (isEligibleMonitorField(snapshot)) {
+      clearTimeout(monitorTimer);
+      clearTimeout(localReviewTimer);
+      activeRequest?.abort();
+      const revision = ++monitorRevision;
+      lastMonitorKey = snapshot.key;
+      pendingSelection = {
+        text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId,
+        x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height,
+        key: snapshot.key, processName: snapshot.processName,
+        replaceSupported: Boolean(snapshot.replaceSupported), monitor: true, reviewPending: false,
+      };
+      currentResult = '';
+      state.monitorStatus = 'Ready when you type';
+      assistantState('waiting', { action: 'Ready when you type…' });
+      publishState();
+      void showMonitorPanel(snapshot, revision, true);
+      return;
+    }
     clearTimeout(monitorTimer);
     clearTimeout(localReviewTimer);
     activeRequest?.abort();
@@ -415,7 +456,7 @@ function handleFocusSnapshot(snapshot) {
   activeRequest?.abort();
   const revision = ++monitorRevision;
   lastMonitorKey = snapshot.key;
-  pendingSelection = { text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true };
+  pendingSelection = { text: snapshot.text, target: snapshot.target, runtimeId: snapshot.runtimeId, x: snapshot.x, y: snapshot.y, width: snapshot.width, height: snapshot.height, key: snapshot.key, processName: snapshot.processName, replaceSupported: Boolean(snapshot.replaceSupported), monitor: true, reviewPending: true };
   currentResult = '';
   state.monitorStatus = trimmedText.length < 3 ? 'Type at least 3 characters to get suggestions' : 'Checking after you pause…';
   assistantState('waiting', { action: trimmedText.length < 3 ? 'Type at least 3 characters…' : 'Checking on this device…' });
@@ -457,19 +498,24 @@ async function proofreadMonitorText(text) {
   return { ...review, correctedText: restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) };
 }
 
-async function showMonitorPanel(snapshot, revision) {
+async function showMonitorPanel(snapshot, revision, reposition = false) {
   try {
     await createAssistantWindow();
     if (revision !== monitorRevision || !pendingSelection?.monitor) return;
     const alreadyVisible = assistantWindow.isVisible();
-    if (!alreadyVisible) {
+    if (reposition || !alreadyVisible) {
       const position = assistantPosition(snapshot);
       assistantWindow.setPosition(position.x, position.y);
+    }
+    if (!alreadyVisible) {
       assistantWindow.setAlwaysOnTop(true);
       assistantWindow.showInactive();
       assistantWindow.moveTop();
     }
-    assistantState('waiting', { action: snapshot.text.trim().length < 3 ? 'Type at least 3 characters…' : 'Checking on this device…' });
+    const waitingAction = snapshot.text.trim().length < 3
+      ? 'Type at least 3 characters…'
+      : pendingSelection?.reviewPending ? 'Checking on this device…' : 'Ready when you type…';
+    assistantState('waiting', { action: waitingAction });
     if (!alreadyVisible) void raiseWindowWithoutFocus(assistantNativeHandle()).catch(() => {});
   } catch (error) {
     if (revision === monitorRevision) {
@@ -485,6 +531,7 @@ async function requestMonitorProofread(snapshot, revision) {
     monitorTimer = setTimeout(() => { void requestMonitorProofread(snapshot, revision); }, 250);
     return;
   }
+  pendingSelection.reviewPending = false;
   if (!providerReady()) {
     if (!pendingSelection.localReview && pendingSelection.localReviewPromise) {
       try { pendingSelection.localReview = await pendingSelection.localReviewPromise; }
@@ -864,6 +911,9 @@ async function replaceSelection() {
   state.notice = monitorMode ? 'The active field was corrected.' : 'The selected text was replaced.';
   if (monitorMode) {
     appliedMonitorSnapshot = { key: pendingSelection.key, text: currentResult };
+    pendingSelection.text = currentResult;
+    pendingSelection.reviewPending = false;
+    pendingSelection.localReview = undefined;
     state.monitorStatus = 'Correction applied';
     assistantState('done', { action: 'Correction applied', unchanged: false });
   }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendContinuation, hasProofreadableProse, isBrowserAddressField, isLiveProofreadCandidate, isPendingMonitorTextEdit, isReadyForLiveProofread, isSamePendingMonitorText, isUserEditSnapshot, MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, preserveOuterWhitespace, protectUrls, restoreUrls } from './live-proofread.js';
+import { appendContinuation, hasProofreadableProse, isBrowserAddressField, isEligibleMonitorField, isLiveProofreadCandidate, isPendingMonitorTextEdit, isReadyForLiveProofread, isSamePendingMonitorText, isUserEditSnapshot, MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, preserveOuterWhitespace, protectUrls, restoreUrls } from './live-proofread.js';
 
 test('live drafts trim surrounding whitespace and wait for enough context', () => {
   assert.equal(prepareLiveDraft('  A short draft.  '), 'A short draft.');
@@ -28,6 +28,9 @@ test('live monitoring ignores URL-only input and browser address bars', () => {
   assert.equal(isLiveProofreadCandidate({ ...edited, text: 'Please fix this sentence', controlName: 'Address and search bar' }), false);
   assert.equal(isBrowserAddressField({ processName: 'msedge.exe', automationId: 'AddressBar' }), true);
   assert.equal(isLiveProofreadCandidate({ ...edited, text: 'Please fix this sentence', controlName: 'Message' }), true);
+  assert.equal(isEligibleMonitorField({ ...edited, changed: false, text: '', controlName: 'Message' }), true);
+  assert.equal(isEligibleMonitorField({ ...edited, changed: false, text: 'Existing draft text', controlName: 'Message' }), true);
+  assert.equal(isEligibleMonitorField({ ...edited, changed: false, text: 'https://example.com', controlName: 'Address and search bar' }), false);
 });
 
 test('temporary focus recovery keeps unchanged suggestions and detects missed edits', () => {

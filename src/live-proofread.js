@@ -42,6 +42,12 @@ export function isBrowserAddressField(snapshot) {
   return /address(?:\s+and\s+search)?[\s_-]*bar|omnibox|url[\s_-]*bar|web\s+address/i.test(fieldLabel);
 }
 
+export function isEligibleMonitorField(snapshot) {
+  return snapshot?.active === true && snapshot.editable === true && snapshot.readOnly === false &&
+    typeof snapshot.text === 'string' && snapshot.text.length <= MAX_LIVE_DRAFT_LENGTH &&
+    !isBrowserAddressField(snapshot);
+}
+
 export function hasProofreadableProse(value) {
   if (typeof value !== 'string') return false;
   const prose = value.replace(URL_PATTERN, ' ').replace(EMAIL_PATTERN, ' ').trim();
@@ -51,7 +57,8 @@ export function hasProofreadableProse(value) {
 }
 
 export function isLiveProofreadCandidate(snapshot, pending) {
-  return (isUserEditSnapshot(snapshot) || isPendingMonitorTextEdit(snapshot, pending)) && !isBrowserAddressField(snapshot) &&
+  return isEligibleMonitorField(snapshot) &&
+    (isUserEditSnapshot(snapshot) || isPendingMonitorTextEdit(snapshot, pending)) &&
     isReadyForLiveProofread(snapshot.text) && hasProofreadableProse(snapshot.text);
 }
 

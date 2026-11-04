@@ -1,6 +1,3 @@
 @echo off
-setlocal
-cd /d "%~dp0"
-if not defined CLEARWRITE_DATA_DIR set "CLEARWRITE_DATA_DIR=%~dp0data"
-if not defined electron_config_cache set "electron_config_cache=%~dp0cache\electron"
-call npm start
+start "" "%SystemRoot%\System32\wscript.exe" //B //Nologo "%~dp0start-clearwrite.vbs"
+exit /b

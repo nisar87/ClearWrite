@@ -44,7 +44,7 @@ The sibling folder must be named `WritingAssistantDevKit` because the local pack
 
 On first run, configure a provider in Settings. The default shortcut is `Ctrl+Shift+Space`. Automatic monitoring and Windows startup are opt-in. Use the Live writing page to pause or resume monitoring; configure additional excluded app process names in Settings.
 
-You can also run `start-clearwrite.cmd` after installing dependencies; it sets local runtime data and Electron cache folders relative to the checkout.
+You can also launch `start-clearwrite.vbs` after installing dependencies; it starts Electron directly without leaving a console window open and keeps runtime data and Electron cache folders relative to the checkout. `start-clearwrite.cmd` is a compatibility wrapper for launching the hidden VBS entry point.
 
 ## Privacy And Local Data
 

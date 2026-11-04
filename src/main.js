@@ -576,6 +576,7 @@ async function requestMonitorProofread(snapshot, revision) {
   }
   monitorSession = transitionMonitorSession(monitorSession, { type: 'reviewing', revision });
   pendingSelection.reviewPending = false;
+  raiseMonitorPanel();
   if (!providerReady()) {
     if (!pendingSelection.localReview && pendingSelection.localReviewPromise) {
       try { pendingSelection.localReview = await pendingSelection.localReviewPromise; }
@@ -643,6 +644,15 @@ function assistantNativeHandle() {
   const handle = assistantWindow?.getNativeWindowHandle();
   if (!handle) throw new Error('The suggestion window is unavailable.');
   return handle.length >= 8 ? Number(handle.readBigUInt64LE(0)) : handle.readUInt32LE(0);
+}
+
+function raiseMonitorPanel() {
+  if (!assistantWindow || assistantWindow.isDestroyed()) return;
+  assistantWindow.setAlwaysOnTop(true);
+  assistantWindow.moveTop();
+  void raiseWindowWithoutFocus(assistantNativeHandle())
+    .then(() => startup('monitor panel promoted without focus'))
+    .catch((error) => startup(`could not raise monitor panel: ${error.message}`));
 }
 
 function startFocusMonitor() {
@@ -874,6 +884,7 @@ async function transform(action) {
       state.monitorStatus = currentResult === selection.text ? 'No correction needed' : 'Suggestion ready to review';
     }
     assistantState('done', { action: actions[action].label, replyOnly: action === 'reply', unchanged: currentResult === selection.text });
+    if (selection.monitor) raiseMonitorPanel();
     if (selection.monitor && currentResult === selection.text) {
       state.monitorStatus = 'No correction needed';
       assistantState('done', { action: 'No correction needed', unchanged: true });
@@ -881,12 +892,10 @@ async function transform(action) {
       return;
     }
     if (selection.monitor) {
-      assistantWindow?.setAlwaysOnTop(true);
       if (!assistantWindow?.isVisible()) {
         assistantWindow?.showInactive();
-        assistantWindow?.moveTop();
-        await raiseWindowWithoutFocus(assistantNativeHandle());
       }
+      raiseMonitorPanel();
     }
     publishState();
   } catch (error) {
@@ -907,6 +916,7 @@ async function transform(action) {
         }
         assistantState('error', { message: error.message || 'The request did not complete. Nothing was changed.' });
       }
+      if (selection.monitor) raiseMonitorPanel();
       publishState();
     }
   } finally {

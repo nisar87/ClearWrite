@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendContinuation, hasProofreadableProse, isBrowserAddressField, isEligibleMonitorField, isLiveProofreadCandidate, isPendingMonitorTextEdit, isReadyForLiveProofread, isSamePendingMonitorText, isUserEditSnapshot, MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, preserveOuterWhitespace, protectUrls, restoreUrls } from './live-proofread.js';
+import { appendContinuation, hasProofreadableProse, isBrowserAddressField, isEligibleMonitorField, isLiveProofreadCandidate, isPassiveBrowserDocument, isPendingMonitorTextEdit, isReadyForLiveProofread, isSamePendingMonitorText, isUserEditSnapshot, MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, preserveOuterWhitespace, protectUrls, restoreUrls } from './live-proofread.js';
 
 test('live drafts trim surrounding whitespace and wait for enough context', () => {
   assert.equal(prepareLiveDraft('  A short draft.  '), 'A short draft.');
@@ -31,6 +31,14 @@ test('live monitoring ignores URL-only input and browser address bars', () => {
   assert.equal(isEligibleMonitorField({ ...edited, changed: false, text: '', controlName: 'Message' }), true);
   assert.equal(isEligibleMonitorField({ ...edited, changed: false, text: 'Existing draft text', controlName: 'Message' }), true);
   assert.equal(isEligibleMonitorField({ ...edited, changed: false, text: 'https://example.com', controlName: 'Address and search bar' }), false);
+});
+
+test('browser page documents are ignored while reading but accepted after an edit', () => {
+  const page = { active: true, editable: true, readOnly: false, text: 'A page with readable text.', processName: 'chrome', controlType: 'ControlType.Document', changed: false };
+  assert.equal(isPassiveBrowserDocument(page), true);
+  assert.equal(isEligibleMonitorField(page), false);
+  assert.equal(isEligibleMonitorField({ ...page, changed: true }), true);
+  assert.equal(isEligibleMonitorField({ ...page, processName: 'notepad.exe' }), true);
 });
 
 test('temporary focus recovery keeps unchanged suggestions and detects missed edits', () => {

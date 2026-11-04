@@ -1146,17 +1146,17 @@ else {
     await loadPreferences();
     startup('preferences loaded');
     app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: [path.resolve(root, '..')] });
-    await loadGeminiApiKey();
-    startup('Gemini credential metadata loaded');
     await createMainWindow();
     startup('main window loaded');
     await createAssistantWindow();
     startup('assistant loaded');
+    startFocusMonitor();
+    await loadGeminiApiKey();
+    startup('Gemini credential metadata loaded');
     void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
     await createTray();
     startup('tray ready');
     if (!registerShortcut()) state.notice = 'The shortcut is in use. Change it in ClearWrite settings.';
-    startFocusMonitor();
     void refreshState().then(() => {
       providerStateReady = true;
     }).catch((error) => {

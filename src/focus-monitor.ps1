@@ -135,6 +135,7 @@ while ($true) {
         runtimeId = $runtimeId
         controlName = $current.Name
         automationId = $current.AutomationId
+        controlType = $type
         editable = $true
         readOnly = $false
         changed = $textChanged

@@ -42,10 +42,17 @@ export function isBrowserAddressField(snapshot) {
   return /address(?:\s+and\s+search)?[\s_-]*bar|omnibox|url[\s_-]*bar|web\s+address/i.test(fieldLabel);
 }
 
+export function isPassiveBrowserDocument(snapshot) {
+  const processName = typeof snapshot?.processName === 'string'
+    ? snapshot.processName.toLowerCase().replace(/\.exe$/i, '')
+    : '';
+  return BROWSER_PROCESSES.has(processName) && snapshot?.controlType === 'ControlType.Document' && snapshot.changed !== true;
+}
+
 export function isEligibleMonitorField(snapshot) {
   return snapshot?.active === true && snapshot.editable === true && snapshot.readOnly === false &&
     typeof snapshot.text === 'string' && snapshot.text.length <= MAX_LIVE_DRAFT_LENGTH &&
-    !isBrowserAddressField(snapshot);
+    !isBrowserAddressField(snapshot) && !isPassiveBrowserDocument(snapshot);
 }
 
 export function hasProofreadableProse(value) {

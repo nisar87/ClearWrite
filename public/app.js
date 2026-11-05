@@ -4,7 +4,7 @@ let current = null;
 
 function requireApi(method) {
   if (!api || typeof api[method] !== 'function') {
-    throw new Error('ClearWrite’s desktop connection did not load. Restart the app; if this persists, check startup.log on E:.');
+    throw new Error('ClearWrite’s desktop connection did not load. Restart the app; if this persists, check startup.log in your ClearWrite data folder.');
   }
   return api[method].bind(api);
 }

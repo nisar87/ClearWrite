@@ -9,28 +9,73 @@
   <script defer src="./assistant.js"></script>
 </head>
 <body class="assistant-page">
-  <main class="popover">
-    <header class="popover-header"><div class="brand-mini"><span class="brand-mark small">CW</span><strong>ClearWrite</strong><span class="assistant-dot" id="assistant-dot" title="ChatGPT connection"></span></div><button class="close-button" id="close-button" title="Close">×</button></header>
-    <div class="selected-label"><span id="source-label">YOUR SELECTION</span><span class="selection-counter" id="selection-counter"></span></div>
-    <div class="selected-text" id="selected-text"></div>
-    <section class="actions" id="actions">
-      <div class="action-group"><div class="action-group-title">FIX</div><button class="action-primary" data-action="correct"><span class="action-bullet bullet-coral">A</span><span><b>Correct writing</b><small>Spelling, grammar, punctuation</small></span><span class="action-chevron">→</span></button></div>
-      <div class="action-group"><div class="action-group-title">REWRITE</div><div class="action-grid-small"><button data-action="clearer"><b>Clearer</b><small>Improve flow</small></button><button data-action="professional"><b>Professional</b><small>Polish the tone</small></button><button data-action="friendly"><b>Friendly</b><small>Sound more natural</small></button><button data-action="continue"><b>Continue</b><small>Finish the thought</small></button></div></div>
-      <div class="action-group"><div class="action-group-title">CONVERSATION</div><button class="action-primary" data-action="reply"><span class="action-bullet bullet-blue">R</span><span><b>Suggest a reply</b><small>Draft from the selected message</small></span><span class="action-chevron">→</span></button></div>
-    </section>
-    <section class="result-section hidden" id="result-section">
-      <div class="result-heading"><strong id="result-title">Suggestion</strong><span id="result-state"></span></div>
-      <div class="changes-section hidden" id="changes-section" aria-label="Text changes">
-        <div class="change-column"><span>Your text</span><div id="original-diff"></div></div>
-        <div class="change-column"><span>Correction</span><div id="corrected-diff"></div></div>
+  <main class="panel" id="panel" data-status="quiet" aria-labelledby="panel-title">
+    <header class="panel-header">
+      <div class="panel-brand">
+        <span class="brand-mark small" aria-hidden="true">CW</span>
+        <div class="panel-titles"><strong id="panel-title">ClearWrite</strong><span id="panel-context">Live writing</span></div>
       </div>
-      <textarea id="result-text" spellcheck="true" aria-label="AI suggestion"></textarea>
-      <div class="result-actions"><button class="secondary" id="copy-button">Copy</button><button class="primary" id="replace-button">Replace selected text</button></div>
-      <button class="tiny-link try-again" id="back-button">Try another action</button>
-    </section>
-    <div class="working-row hidden" id="working-row"><span class="spinner"></span><span id="working-label">Thinking...</span><button class="tiny-link" id="cancel-button">Cancel</button></div>
-    <p class="inline-error" id="inline-error" role="alert"></p>
-    <footer class="popover-footer"><span><i></i><span id="provider-label">Sent to your selected provider only after your choice</span></span><button class="tiny-link" id="open-app">Open app</button></footer>
+      <div class="panel-tools">
+        <button class="icon-button" id="pin-button" type="button" aria-pressed="true" title="Keep on top of other windows" aria-label="Keep on top of other windows">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.2 1.8 14.2 5.8 12.9 7.1 12 6.9 9.6 9.3 9.9 12.1 8.6 13.4 6 10.8 2.6 14.2 1.8 13.4 5.2 10 2.6 7.4 3.9 6.1 6.7 6.4 9.1 4 8.9 3.1Z"/></svg>
+        </button>
+        <button class="icon-button" id="close-button" type="button" title="Hide panel (Esc). Reopen from the tray or with the shortcut." aria-label="Hide panel">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 3.1 8 6.9l3.8-3.8 1.1 1.1L9.1 8l3.8 3.8-1.1 1.1L8 9.1l-3.8 3.8-1.1-1.1L6.9 8 3.1 4.2Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="status-bar" role="status" aria-live="polite">
+      <span class="status-icon" id="status-icon" aria-hidden="true"></span>
+      <span class="status-line" id="status-line">Starting…</span>
+    </div>
+
+    <div class="pin-notice hidden" id="pin-notice" role="note">
+      <span>Not pinned on top: the app you type in can cover this panel.</span>
+      <button class="link-button" id="pin-notice-button" type="button">Pin on top</button>
+    </div>
+
+    <div class="panel-body" id="panel-body">
+      <section class="empty-state" id="empty-state">
+        <p class="empty-title" id="empty-title">Start typing in any text field.</p>
+        <p class="empty-detail" id="empty-detail"></p>
+        <button class="secondary hidden" id="resume-button" type="button">Resume monitoring</button>
+      </section>
+
+      <section class="text-block hidden" id="source-block" aria-labelledby="source-label">
+        <div class="block-label"><span id="source-label">Your text</span><span class="block-meta" id="source-meta"></span></div>
+        <div class="text-view" id="source-text" tabindex="0"></div>
+      </section>
+
+      <section class="text-block suggestion-block hidden" id="suggestion-block" aria-labelledby="suggestion-label">
+        <div class="block-label"><span id="suggestion-label">Suggestion</span><button class="link-button" id="edit-button" type="button" aria-pressed="false" title="Edit the suggestion before copying or applying">Edit</button></div>
+        <div class="text-view" id="suggestion-text" tabindex="0"></div>
+        <textarea class="hidden" id="suggestion-edit" spellcheck="true" aria-label="Edit suggestion"></textarea>
+        <p class="note hidden" id="suggestion-note"></p>
+        <ul class="findings hidden" id="findings" aria-label="On-device findings"></ul>
+      </section>
+
+      <section class="actions hidden" id="actions" aria-label="Writing actions">
+        <p class="ai-hint hidden" id="ai-hint"></p>
+        <div class="action-group" data-group="fix"><div class="action-group-title">Fix</div><button class="action-primary" data-action="correct" type="button"><span class="action-bullet bullet-coral" aria-hidden="true">A</span><span><b>Correct</b><small>Spelling, grammar, punctuation</small></span></button></div>
+        <div class="action-group" data-group="rewrite"><div class="action-group-title">Rewrite</div><div class="action-grid-small"><button data-action="clearer" type="button" title="Rephrase to improve clarity and flow"><b>Rephrase</b><small>Improve clarity</small></button><button data-action="professional" type="button"><b>Professional</b><small>Polish the tone</small></button><button data-action="friendly" type="button"><b>Friendly</b><small>Sound more natural</small></button><button data-action="continue" type="button"><b>Continue</b><small>Finish the thought</small></button></div></div>
+        <div class="action-group" data-group="reply"><div class="action-group-title">Conversation</div><button class="action-primary" data-action="reply" type="button"><span class="action-bullet bullet-blue" aria-hidden="true">R</span><span><b>Suggest a reply</b><small>Draft from the selected message</small></span></button></div>
+      </section>
+
+      <p class="inline-error" id="inline-error" role="alert"></p>
+    </div>
+
+    <footer class="panel-footer">
+      <div class="action-row" id="action-row">
+        <button class="secondary hidden" id="more-button" type="button" aria-expanded="false" aria-controls="actions" title="Correct, rephrase, or change the tone of this text">More actions</button>
+        <button class="secondary hidden" id="cancel-button" type="button">Cancel</button>
+        <button class="secondary hidden" id="retry-button" type="button">Check again</button>
+        <button class="secondary hidden" id="undo-button" type="button" title="Put your original text back in the field">Undo</button>
+        <button class="secondary hidden" id="copy-button" type="button" title="Copy the full suggestion">Copy</button>
+        <button class="primary hidden" id="apply-button" type="button" title="Replace the text in the original field">Apply</button>
+      </div>
+      <div class="footer-meta"><span id="privacy-line"></span><button class="link-button" id="open-app" type="button">Settings</button></div>
+    </footer>
   </main>
 </body>
 </html>

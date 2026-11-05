@@ -14,4 +14,4 @@ End If
 shell.CurrentDirectory = baseDir
 shell.Environment("Process")("CLEARWRITE_DATA_DIR") = files.BuildPath(baseDir, "data")
 shell.Environment("Process")("ELECTRON_CONFIG_CACHE") = files.BuildPath(baseDir, "cache\electron")
-shell.Run """" & electronPath & """ .", 0, False
+shell.Run """" & electronPath & """ .", 1, False

@@ -1,0 +1,17 @@
+{
+  "revision": "91fe939e9c1259813ee817e95239629c5badf8ec",
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/wolfgarbe/SymSpell/91fe939e9c1259813ee817e95239629c5badf8ec/SymSpell/frequency_dictionary_en_82_765.txt",
+      "sha256": "5eb7d9ca29ba3aee23d11b8b3d3aa048d7e94538b468eeffd9e07f76de7d5125"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/wolfgarbe/SymSpell/91fe939e9c1259813ee817e95239629c5badf8ec/SymSpell/frequency_bigramdictionary_en_243_342.txt",
+      "sha256": "fd892a160184101dd7ae807ac5a302d01fcea1c47304181a8ed7ed9c94545bcd"
+    }
+  ],
+  "words": 30000,
+  "bigrams": 233440,
+  "bytes": 2258302,
+  "sha256": "c8695b89e73762f648c24aeb9f3df43aa78fdb056909624208ba5aedbfd5cfbd"
+}

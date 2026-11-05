@@ -3,13 +3,16 @@ import { randomUUID } from 'node:crypto';
 
 let worker;
 const pending = new Map();
+// Dialect and personal-dictionary words, re-sent whenever the worker (re)starts.
+let config = { dialect: 'american', words: [] };
 
 function getWorker() {
   if (worker) return worker;
   worker = new Worker(new URL('./local-proofread-worker.js', import.meta.url));
   worker.unref();
+  worker.postMessage({ type: 'configure', ...config });
   worker.on('message', (message) => {
-    if (message.type === 'ready') return;
+    if (message.type === 'ready' || message.type === 'configured') return;
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
@@ -55,6 +58,15 @@ export function proofreadLocally(text) {
       reject(error);
     }
   });
+}
+
+// Applies the English dialect and the personal dictionary to the on-device checker.
+export function configureLocalProofreader({ dialect, words } = {}) {
+  config = {
+    dialect: typeof dialect === 'string' ? dialect : config.dialect,
+    words: Array.isArray(words) ? words.filter((word) => typeof word === 'string') : config.words,
+  };
+  worker?.postMessage({ type: 'configure', ...config });
 }
 
 export function stopLocalProofreader() {

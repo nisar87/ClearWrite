@@ -39,6 +39,18 @@ test('editable browser document fields activate immediately on focus', () => {
   assert.equal(isEligibleMonitorField({ ...editor, controlName: 'Address and search bar' }), false);
 });
 
+test('changing playback and other widget values never qualifies as writing', () => {
+  const snapshot = { active: true, changed: true, editable: true, readOnly: false, processName: 'chrome', text: '1 minute 23 seconds of 10 minutes' };
+  for (const type of ['Slider', 'ProgressBar', 'ScrollBar', 'Spinner', 'Button', 'CheckBox', 'Hyperlink', 'Custom']) {
+    const widget = { ...snapshot, controlType: `ControlType.${type}` };
+    assert.equal(isEligibleMonitorField(widget), false, type);
+    assert.equal(isLiveProofreadCandidate(widget), false, type);
+  }
+  for (const type of ['Edit', 'Document', 'ComboBox']) {
+    assert.equal(isLiveProofreadCandidate({ ...snapshot, text: 'Please review this sentence.', controlType: `ControlType.${type}` }), true, type);
+  }
+});
+
 test('temporary focus recovery keeps unchanged suggestions and detects missed edits', () => {
   const pending = { monitor: true, key: 'field-1', text: 'The first version is already quite long.' };
   const resumed = { active: true, changed: false, editable: true, readOnly: false, key: 'field-1', text: pending.text };
@@ -77,4 +89,28 @@ test('continuations preserve the original selection and avoid awkward spacing', 
 test('corrections preserve the user text field’s outer whitespace', () => {
   assert.equal(preserveOuterWhitespace('  teh word  ', 'the word'), '  the word  ');
   assert.equal(preserveOuterWhitespace('\nwrong\t', 'right\n'), '\nright\t');
+});
+
+test('suggestions keep the field\'s Windows line endings', async () => {
+  const { matchLineEndings } = await import('./live-proofread.js');
+  assert.equal(matchLineEndings('One line.\r\nTwo line.', 'One line.\nTwo lines.'), 'One line.\r\nTwo lines.');
+  assert.equal(matchLineEndings('One line.\nTwo line.', 'One line.\r\nTwo lines.'), 'One line.\nTwo lines.');
+});
+
+test('unsafe AI rewrites are rejected in favour of no suggestion', async () => {
+  const { isSafeCorrection } = await import('./live-proofread.js');
+  assert.equal(isSafeCorrection('i dont no where it is', "I don't know where it is."), true);
+  assert.equal(isSafeCorrection('Please send teh report by friday so we can reveiw it.', 'Please send the report by Friday so we can review it.'), true);
+  assert.equal(isSafeCorrection('Please send teh report by friday so we can reveiw it.', "Here's the corrected text: Please send the report by Friday so we can review it."), false);
+  assert.equal(isSafeCorrection('Can we meet tomorrow to discuss the budget plan?', 'I would be delighted to schedule a meeting with you at your earliest convenience regarding our finances.'), false);
+  assert.equal(isSafeCorrection('Short note here.', ''), false);
+  assert.equal(isSafeCorrection('Short.', 'Short.'), true);
+});
+
+test('regression: a correct fix of a short, heavily misspelled sentence is not rejected as a rewrite', async () => {
+  const { isSafeCorrection } = await import('./live-proofread.js');
+  // Exact sentence from the Windows reproduction; Gemini's answer was discarded before.
+  assert.equal(isSafeCorrection('i has a eror in this sentense', 'I have an error in this sentence.'), true);
+  assert.equal(isSafeCorrection('teh qick brwn fox jumpd ovr teh lazy dog', 'The quick brown fox jumped over the lazy dog.'), true);
+  assert.equal(isSafeCorrection('Can we meet tomorrow to discuss the budget plan?', 'Let us schedule a call next week about finances and planning?'), false);
 });

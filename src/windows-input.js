@@ -30,8 +30,10 @@ public static class ClearWriteInput {
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
-  [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  // Physical pixels on every monitor, so ClearWrite can convert to Electron DIPs correctly.
+  public static void UsePhysicalPixels() { try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { } }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
   public static void Chord(ushort key) {
     var started = Environment.TickCount;
@@ -79,6 +81,7 @@ switch ($env:CLEARWRITE_ACTION) {
     'ok'
   }
   'capture' {
+    [ClearWriteInput]::UsePhysicalPixels()
     $target = [ClearWriteInput]::GetForegroundWindow().ToInt64()
     $before = [ClearWriteInput]::GetClipboardSequenceNumber()
     $point = New-Object ClearWriteInput+POINT
@@ -110,11 +113,6 @@ switch ($env:CLEARWRITE_ACTION) {
     [ClearWriteInput]::Chord(0x41)
     Start-Sleep -Milliseconds 80
     [ClearWriteInput]::Chord(0x56)
-    'ok'
-  }
-  'raise-window' {
-    $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
-    if (-not [ClearWriteInput]::SetWindowPos($target, [IntPtr](-1), 0, 0, 0, 0, 0x53)) { throw 'Windows could not raise the suggestion window.' }
     'ok'
   }
   default { throw 'Unknown input action.' }
@@ -157,7 +155,3 @@ export async function replaceFieldInWindow(target, expectedText, runtimeId) {
   await run('replace-field', target, expectedText, runtimeId);
 }
 
-export async function raiseWindowWithoutFocus(target) {
-  if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The suggestion window is unavailable.');
-  await run('raise-window', target);
-}

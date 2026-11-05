@@ -59,7 +59,8 @@ function render(state) {
   const timedPause = Boolean(state.monitorEnabled && state.monitorPausedUntil > Date.now());
   const monitoring = Boolean(state.monitorEnabled && !timedPause);
   $('monitor-heading').textContent = monitoring ? 'Monitoring is on' : timedPause ? 'Monitoring is paused temporarily' : 'Monitoring is paused';
-  $('monitor-status').textContent = state.monitorStatus || (monitoring ? 'Waiting for a text field' : 'Monitoring paused');
+  $('monitor-status').textContent = (state.monitorStatus || (monitoring ? 'Waiting for a text field' : 'Monitoring paused')) +
+    (monitoring && state.panelPinned === false ? ' · The writing panel is not pinned on top, so the app you type in can cover it. Pin it from the panel or the tray.' : '');
   $('monitor-toggle').textContent = monitoring ? 'Pause monitoring' : 'Resume monitoring';
   $('monitor-toggle').setAttribute('aria-pressed', String(monitoring));
   $('monitor-indicator').classList.toggle('on', monitoring);
@@ -91,9 +92,89 @@ function render(state) {
     select.append(option);
   }
   select.disabled = !state.models.length;
+  renderProofreading(state, { isGemini, connected });
   showNotice(state.notice);
   showNotice(state.notice, true);
 }
+
+function renderProofreading(state, { isGemini, connected }) {
+  const offline = state.proofreadingMode !== 'ai';
+  const providerLabel = isGemini ? 'Google Gemini' : 'ChatGPT';
+  $('mode-offline').checked = offline;
+  $('mode-ai').checked = !offline;
+  $('mode-ai-detail').textContent = `After you pause, eligible text from the field you are editing is sent to ${providerLabel} (your selected provider) for context-aware correction. Rephrase, tone, continue, and reply actions become available. If a request fails, the on-device result is shown instead.`;
+  $('mode-note').textContent = state.modeNotice
+    || (!offline && !connected ? `AI-assisted is selected, but ${providerLabel} is not set up yet. Until it is, text is checked on this device only. Set it up in Settings.` : '');
+  if (offline) {
+    $('status-dot').classList.add('on');
+    $('status-label').textContent = 'Offline only';
+    $('rail-status-dot').classList.add('on');
+    $('rail-status-label').textContent = 'Offline only';
+    $('rail-status-detail').textContent = 'Checked on this device';
+    $('live-provider-label').textContent = 'Suggestions are checked on this device; no text is sent anywhere';
+    $('live-model-label').textContent = '';
+  } else {
+    $('live-provider-label').textContent = connected ? `AI-assisted: eligible text is sent to ${providerLabel} after a pause` : `AI-assisted: ${providerLabel} is not set up, so text is checked on this device`;
+  }
+  if (state.session?.status === 'unavailable') {
+    $('settings-connection').textContent = 'Not installed. ChatGPT sign-in needs the optional DevKit (see README); Offline only and Gemini work without it.';
+    $('connect-button').disabled = true;
+    $('connect-button').textContent = 'ChatGPT sign-in not installed';
+  }
+  const select = $('dialect-select');
+  if (!select.options.length) {
+    for (const [value, label] of Object.entries(state.englishDialects || {})) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    }
+  }
+  select.value = state.englishDialect || 'american';
+  const list = $('dictionary-list');
+  list.replaceChildren(...(state.dictionaryWords || []).map((word) => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    label.textContent = word;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = `Remove “${word}” from your dictionary`;
+    remove.setAttribute('aria-label', `Remove ${word} from your dictionary`);
+    remove.addEventListener('click', async () => {
+      try { await requireApi('removeDictionaryWord')(word); showNotice(`Removed “${word}” from your dictionary.`, true); }
+      catch (error) { showNotice(error.message, true); }
+    });
+    item.append(label, remove);
+    return item;
+  }));
+  $('dictionary-location').textContent = `${(state.dictionaryWords || []).length.toLocaleString()} word${(state.dictionaryWords || []).length === 1 ? '' : 's'}. Stored only on this device${state.dictionaryLocation ? ` (${state.dictionaryLocation})` : ''}; never uploaded or written to logs.`;
+}
+
+document.querySelectorAll('input[name="proofreading-mode"]').forEach((input) => input.addEventListener('change', async () => {
+  if (!input.checked) return;
+  try {
+    await requireApi('setProofreadingMode')(input.value);
+    showNotice(input.value === 'ai' ? 'AI-assisted mode is on. Eligible text is sent to your selected provider after a pause.' : 'Offline only: text is checked on this device and nothing is sent anywhere.');
+  } catch (error) {
+    showNotice(error.message);
+    if (current) render(current);
+  }
+}));
+$('dialect-select').addEventListener('change', async () => {
+  try { await requireApi('setDialect')($('dialect-select').value); showNotice('English dialect saved.', true); }
+  catch (error) { showNotice(error.message, true); }
+});
+async function addDictionaryWordFromInput() {
+  const input = $('dictionary-input');
+  try {
+    const result = await requireApi('addDictionaryWord')(input.value);
+    showNotice(result.added ? `Added “${result.word}” to your dictionary.` : `“${result.word}” is already in your dictionary.`, true);
+    input.value = '';
+  } catch (error) { showNotice(String(error.message || error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''), true); }
+}
+$('dictionary-add').addEventListener('click', addDictionaryWordFromInput);
+$('dictionary-input').addEventListener('keydown', (event) => { if (event.key === 'Enter') void addDictionaryWordFromInput(); });
 
 document.querySelectorAll('[data-page]').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('[data-page]').forEach((item) => item.classList.toggle('active', item === button));

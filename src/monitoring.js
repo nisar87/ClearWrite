@@ -32,3 +32,12 @@ export function monitoringPauseDeadline(period, now = Date.now()) {
 export function isMonitoringActive(enabled, pausedUntil = 0, now = Date.now()) {
   return enabled === true && (!Number.isFinite(pausedUntil) || pausedUntil <= now);
 }
+
+// Remote-desktop and virtual-machine viewers draw the remote screen as one opaque surface,
+// so UI Automation on this PC cannot see the text fields inside them.
+export const REMOTE_SESSION_PROCESSES = Object.freeze(['mstsc', 'msrdc', 'vmconnect', 'vmware', 'vmware-remotemks', 'virtualboxvm', 'wfica32', 'cdviewer', 'anydesk', 'teamviewer', 'vncviewer', 'tvnviewer']);
+
+export function isRemoteSessionApp(processName) {
+  const name = typeof processName === 'string' ? processName.toLowerCase().replace(/\.exe$/i, '') : '';
+  return REMOTE_SESSION_PROCESSES.includes(name);
+}

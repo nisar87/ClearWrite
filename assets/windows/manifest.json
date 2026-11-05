@@ -1,0 +1,11 @@
+{
+  "package": "Interop.UIAutomationClient",
+  "version": "10.19041.0",
+  "source": "https://api.nuget.org/v3-flatcontainer/interop.uiautomationclient/10.19041.0/interop.uiautomationclient.10.19041.0.nupkg",
+  "project": "https://github.com/Roemer/UIAutomation-Interop",
+  "packageSha256": "0d2ed17db2cb13a262f0580ab992db87577651c25a9899053df4114b4d9ff3b1",
+  "file": "lib/net45/Interop.UIAutomationClient.dll",
+  "sha256": "dcea43a1f5a2114b7bcc9e41cc1377064307611d0caa50f1ec203b887f4c20bb",
+  "license": "MIT",
+  "modified": false
+}

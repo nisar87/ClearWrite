@@ -4,6 +4,7 @@ export const MIN_LIVE_DRAFT_LENGTH = 12;
 const URL_PATTERN = /\b(?:(?:https?|ftp):\/\/|www\.)[^\s<>"'`]+|\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d{1,5})?(?:\/[^\s<>"'`]*)?/giu;
 const EMAIL_PATTERN = /\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/giu;
 const BROWSER_PROCESSES = new Set(['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'arc']);
+const EDITOR_CONTROL_TYPES = new Set(['ControlType.Edit', 'ControlType.Document', 'ControlType.ComboBox']);
 
 export function prepareLiveDraft(value) {
   if (typeof value !== 'string') throw new Error('Draft text must be plain text.');
@@ -44,6 +45,7 @@ export function isBrowserAddressField(snapshot) {
 
 export function isEligibleMonitorField(snapshot) {
   return snapshot?.active === true && snapshot.editable === true && snapshot.readOnly === false &&
+    (!snapshot.controlType || EDITOR_CONTROL_TYPES.has(snapshot.controlType)) &&
     typeof snapshot.text === 'string' && snapshot.text.length <= MAX_LIVE_DRAFT_LENGTH &&
     !isBrowserAddressField(snapshot);
 }
@@ -92,4 +94,61 @@ export function preserveOuterWhitespace(original, corrected) {
   const leading = original.match(/^\s*/u)?.[0] || '';
   const trailing = original.match(/\s*$/u)?.[0] || '';
   return `${leading}${corrected.trim()}${trailing}`;
+}
+
+// Keeps the field's line-ending style so applying a suggestion to a Windows edit control
+// does not turn every line into a "change" (and the field's echo into a new edit).
+export function matchLineEndings(original, corrected) {
+  if (typeof corrected !== 'string') return corrected;
+  const normalized = corrected.replace(/\r\n/g, '\n');
+  return original.includes('\r\n') ? normalized.replace(/\n/g, '\r\n') : normalized;
+}
+
+const COMMENTARY_PATTERN = /^\s*(?:here(?:'|’)?s|here is|sure[,!.]|certainly[,!.]|corrected(?: text| version)?:|the corrected)/i;
+
+// Prefer no suggestion to an unsafe rewrite: a proofreading answer should keep most of
+// the writer's words and roughly the same length, and must not be chat commentary.
+export function isSafeCorrection(original, corrected) {
+  if (typeof original !== 'string' || typeof corrected !== 'string') return false;
+  const before = original.trim();
+  const after = corrected.trim();
+  if (!after) return false;
+  if (before === after) return true;
+  if (COMMENTARY_PATTERN.test(after) && !COMMENTARY_PATTERN.test(before)) return false;
+  const slack = Math.max(24, before.length * 0.5);
+  if (Math.abs(after.length - before.length) > slack) return false;
+  const words = (value) => value.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  const source = words(before);
+  if (source.length >= 6) {
+    // A word counts as kept when the suggestion contains it or a close spelling of it
+    // (eror -> error, sentense -> sentence, a -> an). Exact matching alone rejected
+    // legitimate corrections of short, heavily misspelled sentences as "rewrites".
+    const remaining = words(after);
+    let kept = 0;
+    for (const word of source) {
+      const tolerance = Math.max(1, Math.floor(word.length / 3));
+      let index = remaining.indexOf(word);
+      if (index < 0) index = remaining.findIndex((candidate) => editDistance(word, candidate, tolerance) <= tolerance);
+      if (index >= 0) { kept += 1; remaining.splice(index, 1); }
+    }
+    if (kept / source.length < 0.5) return false;
+  }
+  return true;
+}
+
+// Levenshtein distance, stopping early once it exceeds `limit`.
+function editDistance(a, b, limit = Infinity) {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    let rowMinimum = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      rowMinimum = Math.min(rowMinimum, current[j]);
+    }
+    if (rowMinimum > limit) return limit + 1;
+    previous = current;
+  }
+  return previous[b.length];
 }

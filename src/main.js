@@ -18,13 +18,16 @@ import { fileURLToPath } from 'node:url';
 import { captureSelection, pasteToWindow, replaceFieldInWindow } from './windows-input.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = process.env.CLEARWRITE_DATA_DIR || path.resolve(root, '..', 'data');
+const dataDir = process.env.CLEARWRITE_DATA_DIR || (app.isPackaged
+  ? path.join(app.getPath('appData'), 'ClearWrite')
+  : path.resolve(root, '..', 'data'));
 const startupLog = path.join(dataDir, 'startup.log');
 const defaultExcludedApps = DEFAULT_EXCLUDED_PROCESSES;
 const MANUAL_REQUEST_TIMEOUT_MS = 60_000;
 // Diagnostic log. Never pass captured text, prompts, or secrets to this function.
 function startup(message) { void appendFile(startupLog, `${new Date().toISOString()} ${message}\n`).catch(() => {}); }
 app.setName('ClearWrite');
+if (process.platform === 'win32') app.setAppUserModelId('net.clearwrite.desktop');
 app.setPath('userData', dataDir);
 
 let mainWindow;
@@ -1455,7 +1458,7 @@ handle('app:update-settings', async (settings) => {
   }
   if (typeof settings?.startupEnabled === 'boolean') {
     state.startupEnabled = settings.startupEnabled;
-    app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: [path.resolve(root, '..')] });
+    app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: app.isPackaged ? [] : [path.resolve(root, '..')] });
   }
   if (Array.isArray(settings?.excludedApps)) {
     state.excludedApps = normalizeProcessNames(settings.excludedApps);
@@ -1611,7 +1614,13 @@ async function createTray() {
   tray.on('click', () => void restorePanel());
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (process.argv.includes('--distribution-smoke')) {
+  void app.whenReady().then(async () => {
+    const { runDistributionSmoke } = await import('./distribution-smoke.js');
+    await runDistributionSmoke({ app, BrowserWindow, safeStorage }, dataDir);
+  }).catch((error) => { startup(`distribution smoke error: ${error.message}`); app.exit(1); });
+}
+else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => void showMain());
   startup('waiting for electron ready');
@@ -1622,7 +1631,7 @@ else {
     await loadPreferences();
     startup('preferences loaded');
     await initChatGPT();
-    app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: [path.resolve(root, '..')] });
+    app.setLoginItemSettings({ openAtLogin: state.startupEnabled, path: process.execPath, args: app.isPackaged ? [] : [path.resolve(root, '..')] });
     await createMainWindow();
     startup('main window loaded');
     await createAssistantWindow();

@@ -72,6 +72,18 @@ Review timing: a check runs 650 ms after the last detected edit (the focus helpe
 
 ## Requirements
 
+### Download for Windows (no developer tools needed)
+
+Get the installer or ZIP from [GitHub Releases](https://github.com/nisar87/ClearWrite/releases).
+The x64 Windows package includes Electron, offline dictionaries/models, editor
+readers, and the optional ChatGPT DevKit. No Node.js/npm installation is needed.
+Read [Getting started](docs/GETTING-STARTED.md) for installation, provider setup,
+privacy, prerequisites and limitations. Packaged data lives in `%APPDATA%\ClearWrite`.
+The ChatGPT-included distribution is for **personal noncommercial use only** under
+the bundled DevKit license; free distribution does not grant business-use rights.
+
+### Building from source
+
 - Windows 10 or 11
 - Node.js 22.12 or later and npm
 - Nothing else for offline proofreading
@@ -132,6 +144,22 @@ The reader supports capability-based ValuePattern, guarded rich TextPattern, foc
 The Windows monitor relies on UI Automation and works only with text fields that expose usable accessibility information. Some apps, remote sessions, protected/elevated windows, and custom editors may not expose text reliably. Manual selection uses the system clipboard and keyboard input, so apps that block clipboard access may not support replacement. In those cases, copy the suggestion and paste it yourself.
 
 ## Development
+
+Build the Windows installer and ZIP on Windows with Node.js 22.12+:
+
+```powershell
+npm ci
+npm run check
+npm test
+npm run dist:win
+```
+
+The built optional ChatGPT DevKit must be present as described above; distribution
+builds fail rather than silently shipping without it. Output is in ignored `release/`.
+The builder copies an explicit application allowlist, resolves the production
+dependency closure (including DevKit dependencies), and never copies your data,
+cache, logs, `.env`, personal dictionary, or Git metadata. Checksums accompany the
+artifacts. See [distribution guide](docs/DISTRIBUTION.md) for release verification.
 
 Offline accuracy evaluation and model provenance are documented in [benchmark/README.md](benchmark/README.md). Run `npm run benchmark:offline` to measure the bundled checker. Benchmark results are generated locally and ignored by Git; no user drafts are collected.
 

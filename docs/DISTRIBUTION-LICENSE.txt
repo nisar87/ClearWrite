@@ -1,0 +1,15 @@
+ClearWrite Windows beta distribution
+
+ClearWrite-authored code is MIT licensed (CLEARWRITE-LICENSE.txt).
+Third-party components retain their own licenses and notices.
+
+THIS PACKAGE INCLUDES THE SIGN-IN WITH CHATGPT DEVKIT.
+Its separate license permits NONCOMMERCIAL PURPOSES ONLY. This does not grant
+permission to use the DevKit for employer, client, or business operations,
+even if ClearWrite is provided free of charge. Commercial use requires a
+separate written agreement with OpenAI. See SIWC-DEVKIT-LICENSE.txt in full.
+
+Installing this package does not grant ChatGPT access or a subscription.
+Use your own eligible account. Account policy and usage limits apply.
+
+Read GETTING-STARTED.md and all bundled licenses before use.

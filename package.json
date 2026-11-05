@@ -1,10 +1,17 @@
 {
   "name": "clearwrite-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0-beta.1",
+  "description": "Offline-first Windows writing assistant with optional AI correction",
+  "author": "Nisar Ahmad",
+  "license": "MIT",
+  "repository": "https://github.com/nisar87/ClearWrite.git",
+  "engines": { "node": ">=22.12" },
   "private": true,
   "type": "module",
   "main": "src/main.js",
   "scripts": {
+    "dist:win": "node scripts/build-distribution.js",
+    "dist:verify": "node scripts/verify-distribution.js",
     "start": "electron .",
     "precheck": "node --check src/monitor-watchdog.js && node --check src/editor-reader.test.js && node --check src/context-spelling.js && node --check src/context-spelling.test.js && node --check src/spelling-selection.js && node --check scripts/benchmark-offline.js && node --check scripts/build-offline-model.js",
     "test:editors": "powershell.exe -NoLogo -NoProfile -Mta -File scripts/test-editor-reader.ps1",
@@ -14,9 +21,12 @@
     "test": "node --test src/windows-input.test.js src/gemini.test.js src/live-proofread.test.js src/monitor-session.test.js src/panel-position.test.js src/panel-lifecycle.test.js src/shortcut.test.js src/proofreading-mode.test.js src/personal-dictionary.test.js src/monitoring.test.js src/local-proofread.test.js src/context-spelling.test.js src/editor-reader.test.js"
   },
   "dependencies": {
-    "electron": "42.11.18",
     "harper.js": "^3.0.0",
     "mnemonist": "0.40.7"
+  },
+  "devDependencies": {
+    "electron": "42.11.18",
+    "electron-builder": "26.18.1"
   },
   "optionalDependencies": {
     "@siwc/local": "file:../WritingAssistantDevKit/packages/local"

@@ -85,6 +85,8 @@ await build({
     electronVersion: manifest.devDependencies.electron,
     electronDist: path.join(root, 'node_modules/electron/dist'),
     asar: false, npmRebuild: false,
+    publish: [{ provider: 'github', owner: 'nisar87', repo: 'ClearWrite', releaseType: 'prerelease' }],
+    generateUpdatesFilesForAllChannels: true,
     files: ['**/*'],
     extraFiles: [
       { from: path.join(root, 'docs/GETTING-STARTED.md'), to: 'GETTING-STARTED.md' },

@@ -20,6 +20,7 @@ function formatShortcut(value) {
 
 function render(state) {
   current = state;
+  renderUpdates(state);
   const isGemini = state.provider === 'gemini';
   const chatgptConnected = state.session.status === 'connected' && state.session.sharing;
   const connected = isGemini ? state.geminiConfigured && state.models.length > 0 : chatgptConnected;
@@ -96,6 +97,52 @@ function render(state) {
   showNotice(state.notice);
   showNotice(state.notice, true);
 }
+
+function openUpdates() {
+  document.querySelector('[data-page="settings"]').click();
+  $('updates-section').scrollIntoView({ block: 'start' });
+}
+
+function renderUpdates(state) {
+  const update = state.updates || { status: 'unavailable' };
+  const status = update.status;
+  const messages = {
+    unavailable: 'Use the Windows Setup installer to enable in-app updates. ZIP and source copies are updated manually.',
+    idle: 'Ready to check for updates.', checking: 'Checking GitHub for updates...',
+    current: 'You are up to date.', available: `Version ${update.availableVersion} is available.`,
+    downloading: `Downloading update: ${Math.floor(update.percent || 0)}%`,
+    downloaded: `Version ${update.availableVersion} is downloaded and verified. Install when you are ready.`,
+    installing: 'Installing update. ClearWrite will restart.', error: update.error || 'The update could not be completed. Try again.',
+  };
+  $('update-version').textContent = `Installed version: ${update.currentVersion || ''}`;
+  document.querySelector('.footer-version').textContent = update.currentVersion || '';
+  $('update-status').textContent = messages[status] || messages.idle;
+  $('update-check').disabled = !update.supported || ['checking', 'downloading', 'downloaded', 'installing'].includes(status);
+  $('update-download').classList.toggle('hidden', !update.availableVersion || !['available', 'error'].includes(status));
+  $('update-cancel').classList.toggle('hidden', status !== 'downloading');
+  $('update-install').classList.toggle('hidden', status !== 'downloaded');
+  $('update-progress').classList.toggle('hidden', status !== 'downloading');
+  $('update-progress').value = update.percent || 0;
+  $('automatic-updates').checked = state.automaticUpdates !== false;
+  $('automatic-updates').disabled = !update.supported;
+  const visible = ['available', 'downloading', 'downloaded'].includes(status);
+  $('update-banner').classList.toggle('hidden', !visible);
+  $('update-banner-text').textContent = visible ? messages[status] : '';
+}
+
+$('update-banner-open').addEventListener('click', openUpdates);
+$('update-releases').addEventListener('click', () => { void requireApi('openReleases')(); });
+for (const [id, method] of [['update-check', 'checkUpdates'], ['update-download', 'downloadUpdate'], ['update-cancel', 'cancelUpdate'], ['update-install', 'installUpdate']]) {
+  $(id).addEventListener('click', async () => {
+    try { await requireApi(method)(); }
+    catch { $('update-status').textContent = 'The update could not be completed. Please try again.'; }
+  });
+}
+$('automatic-updates').addEventListener('change', async () => {
+  try { await requireApi('setAutomaticUpdates')($('automatic-updates').checked); }
+  catch { if (current) renderUpdates(current); }
+});
+api?.onOpenUpdates(openUpdates);
 
 function renderProofreading(state, { isGemini, connected }) {
   const offline = state.proofreadingMode !== 'ai';

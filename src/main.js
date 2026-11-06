@@ -1,4 +1,6 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, safeStorage, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Notification, safeStorage, screen, shell, Tray } from 'electron';
+import { createUpdateManager } from './updates.js';
+import { existsSync } from 'node:fs';
 import { createMonitorWatchdog } from './monitor-watchdog.js';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isBrowserAddressField, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace, matchLineEndings, isSafeCorrection } from './live-proofread.js';
@@ -34,6 +36,8 @@ let mainWindow;
 let assistantWindow;
 let tray;
 let quitting = false;
+let updates;
+let updateNotification;
 
 // Panel window: the lifecycle reducer is the only thing that decides visibility.
 let panel = createPanelLifecycle();
@@ -85,6 +89,8 @@ let state = {
   monitorEnabled: false,
   monitorPausedUntil: 0,
   startupEnabled: false,
+  automaticUpdates: true,
+  updates: { supported: false, status: 'unavailable', currentVersion: app.getVersion(), automatic: true },
   excludedApps: [],
   allowedApps: [],
   restrictToAllowedApps: false,
@@ -195,6 +201,37 @@ function publishState() {
   const session = { ...state.session };
   lastPublishedMonitorStatus = state.monitorStatus;
   mainWindow?.webContents.send('app:state', { ...state, session });
+}
+
+async function initUpdates() {
+  let updater;
+  if (app.isPackaged && process.platform === 'win32' && existsSync(path.join(path.dirname(process.execPath), 'Uninstall ClearWrite.exe'))) {
+    const module = await import('electron-updater');
+    updater = new module.default.NsisUpdater();
+    // Keep updater logs out of user draft/credential logs; only its state is exposed.
+    updater.logger = null;
+  }
+  updates = createUpdateManager({ updater, version: app.getVersion(), automatic: state.automaticUpdates,
+    onState: (value) => { state.updates = value; publishState(); updateTrayMenu(); },
+    notify: (version) => {
+      if (!Notification.isSupported()) return;
+      updateNotification = new Notification({ title: 'ClearWrite update available', body: `Version ${version} is ready to download. Open Settings to review it.` });
+      updateNotification.on('click', () => { void showMain().then(() => mainWindow?.webContents.send('app:open-updates')); });
+      updateNotification.show();
+    },
+    prepareInstall: async () => {
+      const result = await dialog.showMessageBox(mainWindow, { type: 'question', title: 'Install ClearWrite update?',
+        message: 'Restart ClearWrite and install the downloaded update?',
+        detail: 'Finish any pending writing actions first. Your settings and credentials will be kept. Text in other applications will not be changed.',
+        buttons: ['Restart and install', 'Later'], defaultId: 1, cancelId: 1 });
+      if (result.response !== 0) return false;
+      await savePreferences();
+      return true;
+    },
+  });
+  state.updates = updates.snapshot();
+  updates.start();
+  publishState();
 }
 
 function providerReady() {
@@ -1405,6 +1442,18 @@ function registerShortcut(value = state.shortcut) {
 }
 
 handle('app:get-state', () => state);
+handle('updates:check', () => updates?.check());
+handle('updates:download', () => updates?.download());
+handle('updates:cancel', () => updates?.cancel());
+handle('updates:install', () => updates?.install());
+handle('updates:releases', () => shell.openExternal('https://github.com/nisar87/ClearWrite/releases'));
+handle('updates:automatic', async (value) => {
+  if (typeof value !== 'boolean') throw new Error('Choose whether to check for updates automatically.');
+  state.automaticUpdates = value;
+  updates?.setAutomatic(value);
+  await savePreferences();
+  publishState();
+});
 handle('app:connect', async () => {
   const reconnectUsage = state.session.status === 'connected' && !state.session.sharing;
   state.notice = '';
@@ -1506,6 +1555,7 @@ async function loadPreferences() {
     if (Number.isFinite(raw.monitorPausedUntil) && raw.monitorPausedUntil > Date.now()) state.monitorPausedUntil = raw.monitorPausedUntil;
     if (typeof raw.restrictToAllowedApps === 'boolean') state.restrictToAllowedApps = raw.restrictToAllowedApps;
     if (typeof raw.startupEnabled === 'boolean') state.startupEnabled = raw.startupEnabled;
+    if (typeof raw.automaticUpdates === 'boolean') state.automaticUpdates = raw.automaticUpdates;
     if (typeof raw.panelPinned === 'boolean') panel = reducePanel(panel, { type: 'pin', pinned: raw.panelPinned });
     state.panelPinned = panel.pinned;
     const placement = migratePanelPreferences(raw, screen.getAllDisplays());
@@ -1563,6 +1613,7 @@ async function writePreferences() {
     monitorEnabled: state.monitorEnabled,
     monitorPausedUntil: state.monitorPausedUntil,
     startupEnabled: state.startupEnabled,
+    automaticUpdates: state.automaticUpdates,
     excludedApps: state.excludedApps,
     allowedApps: state.allowedApps,
     restrictToAllowedApps: state.restrictToAllowedApps,
@@ -1588,6 +1639,7 @@ function updateTrayMenu() {
   tray.setToolTip(`ClearWrite - select text and press ${formatShortcut(state.shortcut)}`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open ClearWrite', click: () => void showMain() },
+    { label: 'Updates...', click: () => { void showMain().then(() => mainWindow?.webContents.send('app:open-updates')); } },
     { label: 'Show writing panel', accelerator: shortcuts.registered || undefined, registerAccelerator: false, click: () => void restorePanel() },
     { label: 'Keep writing panel on top', type: 'checkbox', checked: panel.pinned, click: (item) => { setPanelPinned(item.checked); } },
     { type: 'separator' },
@@ -1648,6 +1700,8 @@ else {
     void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
     await createTray();
     startup('tray ready');
+    try { await initUpdates(); }
+    catch { startup('updater unavailable; manual installation remains available'); }
     if (!registerShortcut()) {
       state.notice = 'The shortcut is in use. Change it in ClearWrite settings.';
       startup('global shortcut registration failed');
@@ -1670,6 +1724,7 @@ else {
 
 app.on('before-quit', () => {
   quitting = true;
+  updates?.dispose();
   clearTimeout(monitorResumeTimer);
   clearTimeout(focusMonitorRestartTimer);
   clearTimeout(panelBoundsSaveTimer);

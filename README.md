@@ -25,10 +25,17 @@ Choose the mode on the **Live writing** page (or from the tray menu). New instal
 | Spelling and basic grammar | Bundled Harper checker on this device | Selected provider after you pause; on-device result if the request fails |
 | Rephrase, tone, Continue, Suggest a reply | Not available (marked "Needs AI") | Available |
 | Text sent off the device | None | Eligible text from the field you are editing, after a pause, to the selected provider; selected text when you choose a manual AI action |
-| Automatic network requests | None, even when a provider is configured | Provider status, model list, and correction requests |
+| Proofreading network requests | None, even when a provider is configured | Provider status, model list, and correction requests |
 | Account or API key | Not needed | Gemini API key, or ChatGPT sign-in |
 
 Data flow details:
+
+- Application update checks are separate from proofreading. Installed Windows
+  Setup copies check GitHub after startup and every six hours by default. Disable
+  this in Settings > Updates for no automatic update requests. Checks do not send
+  drafts, dictionary words, provider tokens or API keys; GitHub receives normal
+  connection metadata such as the IP address. Downloads and installation require
+  approval. Offline proofreading still works without any internet connection.
 
 - In Offline only mode every provider request is refused inside ClearWrite before any provider code runs. Provider status checks and model lists are not fetched at startup. Buttons in Settings that set up a provider (for example **Verify and save** or **Test Gemini**) contact that provider only when you press them.
 - Switching to AI-assisted affects text you write from then on. Text already on screen is not sent retroactively. Switching back to Offline only cancels any AI request in progress.

@@ -1,6 +1,17 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('clearWrite', {
+  checkUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  cancelUpdate: () => ipcRenderer.invoke('updates:cancel'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  setAutomaticUpdates: (value) => ipcRenderer.invoke('updates:automatic', value),
+  openReleases: () => ipcRenderer.invoke('updates:releases'),
+  onOpenUpdates: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:open-updates', listener);
+    return () => ipcRenderer.removeListener('app:open-updates', listener);
+  },
   getState: () => ipcRenderer.invoke('app:get-state'),
   connect: () => ipcRenderer.invoke('app:connect'),
   cancelConnect: () => ipcRenderer.invoke('app:cancel-connect'),

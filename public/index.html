@@ -26,12 +26,13 @@
     </aside>
     <main class="main">
       <header class="topbar"><div class="breadcrumbs"><span>ClearWrite</span><span class="crumb-separator">/</span><strong id="page-label">Live writing</strong></div><div class="top-status"><i id="status-dot"></i><span id="status-label">Not connected</span></div></header>
+      <div class="update-banner hidden" id="update-banner" role="status"><span id="update-banner-text"></span><button class="text-button" id="update-banner-open">View update</button></div>
       <section class="content live-content" id="live-page">
         <div class="page-title"><div class="eyebrow">DESKTOP WRITING ASSISTANT</div><h1>Write anywhere.</h1><p>Spelling and grammar suggestions work offline out of the box. Manual proofreading stays available with your shortcut, and text is never replaced automatically.</p></div>
         <section class="settings-block mode-block" aria-labelledby="mode-heading">
           <div class="settings-heading"><div><span class="eyebrow">PROOFREADING MODE</span><h2 id="mode-heading">Where should your writing be checked?</h2></div></div>
           <div class="mode-options" role="radiogroup" aria-labelledby="mode-heading">
-            <label class="mode-option"><input type="radio" name="proofreading-mode" value="offline" id="mode-offline"><span><b>Offline only</b><small>Spelling and basic grammar are checked on this device by the bundled Harper checker. No account, API key, or internet connection is needed, and nothing is sent anywhere. English only; it catches common mistakes, not every mistake.</small></span></label>
+            <label class="mode-option"><input type="radio" name="proofreading-mode" value="offline" id="mode-offline"><span><b>Offline only</b><small>Spelling and basic grammar are checked on this device by the bundled Harper checker. No account, API key, or internet connection is needed, and no writing is sent anywhere. English only; it catches common mistakes, not every mistake.</small></span></label>
             <label class="mode-option"><input type="radio" name="proofreading-mode" value="ai" id="mode-ai"><span><b>AI-assisted</b><small id="mode-ai-detail">After you pause, eligible text from the field you are editing is sent to your selected AI provider for context-aware correction. Rephrase, tone, continue, and reply actions become available. If a request fails, the on-device result is shown instead.</small></span></label>
           </div>
           <p class="mode-note" id="mode-note" role="status"></p>
@@ -74,6 +75,20 @@
       </section>
       <section class="content hidden" id="settings-page">
         <div class="page-title"><div class="eyebrow">PREFERENCES</div><h1>Settings</h1><p>Control how ClearWrite opens and connects.</p></div>
+        <section class="settings-block" id="updates-section" aria-labelledby="updates-heading">
+          <div class="settings-heading"><div><span class="eyebrow">APPLICATION</span><h2 id="updates-heading">Updates</h2><p id="update-version"></p></div></div>
+          <p id="update-status" role="status">Ready to check for updates.</p>
+          <progress class="hidden" id="update-progress" max="100" value="0" aria-label="Update download progress"></progress>
+          <div class="account-controls update-controls">
+            <button class="secondary" id="update-check">Check for updates</button>
+            <button class="primary hidden" id="update-download">Download update</button>
+            <button class="secondary hidden" id="update-cancel">Cancel download</button>
+            <button class="primary hidden" id="update-install">Restart and install</button>
+            <button class="text-button" id="update-releases">Release notes</button>
+          </div>
+          <label class="setting-toggle"><input id="automatic-updates" type="checkbox"><span>Check GitHub for updates automatically</span></label>
+          <small id="update-privacy">Checks contact GitHub at startup and every six hours. No writing or AI credentials are sent. Downloads and restarts require your approval. This beta is unsigned.</small>
+        </section>
         <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">ON-DEVICE CHECKER</span><h2>English dialect</h2><p>Offline checking currently supports English only. The dialect decides spellings such as color/colour.</p></div><span class="settings-symbol symbol-teal">EN</span></div><div class="shortcut-controls"><select id="dialect-select" aria-label="English dialect"></select></div></section>
         <section class="settings-block dictionary-block"><div class="settings-heading"><div><span class="eyebrow">ON-DEVICE CHECKER</span><h2>Personal dictionary</h2><p>Names and uncommon words you add here are no longer flagged as misspelled. Words are added only when you choose to.</p></div><span class="settings-symbol symbol-blue">Aa</span></div><div class="shortcut-controls"><input id="dictionary-input" aria-label="Word to add" placeholder="Add a name or word" spellcheck="false" maxlength="48"><button class="secondary" id="dictionary-add">Add to dictionary</button></div><ul class="dictionary-list" id="dictionary-list" aria-label="Personal dictionary words"></ul><small id="dictionary-location">Stored only on this device, never uploaded or written to logs.</small></section>
         <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">AI PROVIDER</span><h2>Choose a provider</h2><p>Used only in AI-assisted mode. In Offline only mode no text is sent to it.</p></div><span class="settings-symbol symbol-blue">AI</span></div><div class="shortcut-controls"><select id="provider-select" aria-label="AI provider"><option value="chatgpt">ChatGPT plan</option><option value="gemini">Google Gemini API</option></select></div></section>

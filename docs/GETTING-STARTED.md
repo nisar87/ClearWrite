@@ -3,7 +3,7 @@
 ## Install
 
 Use Windows 10/11, 64-bit Intel/AMD (x64). ARM64 and 32-bit builds are not provided.
-Run ClearWrite-0.2.0-beta.1-Setup-x64.exe, choose a folder, and open ClearWrite
+Run the Setup-x64.exe download, choose a folder, and open ClearWrite
 from the desktop or Start menu. No administrator account, Node.js, npm, Git,
 Python, Java, browser extension, or separate dictionary download is required.
 
@@ -59,6 +59,25 @@ noncommercial use; obtain appropriate permissions before business deployment.
 
 Alternatively, choose Gemini, save your own Gemini API key, verify it, then
 enable AI-assisted. Provider billing and limits are separate.
+
+## Updates
+
+Setup-installed copies check GitHub 20 seconds after startup and every six hours.
+Settings > Updates has a manual check and an automatic-check toggle. Updates are
+separate from AI/offline proofreading; GitHub receives normal network metadata,
+never your writing, personal dictionary or AI credentials.
+
+Choose Download update when notified. Once downloaded and checksum-verified,
+choose Restart and install and confirm. No update installs simply because you
+quit. Settings, provider credentials and the personal dictionary are retained.
+If a download fails or you cancel, retry later. The app is not uninstalled merely
+to start downloading. Interrupting the actual installation may require manually
+running Setup again. ZIP/source copies must still be updated manually.
+
+Beta versions receive beta-channel releases; stable versions check stable
+releases. Downgrades are disabled. This beta is unsigned; checksum verification
+over GitHub HTTPS is not equivalent to publisher signing. Publisher certificates
+are not bundled, and no GitHub token is shipped in the application.
 
 ## Privacy and removal
 

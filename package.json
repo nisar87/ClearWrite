@@ -1,15 +1,19 @@
 {
   "name": "clearwrite-desktop",
-  "version": "0.2.0-beta.1",
+  "version": "0.2.0-beta.2",
   "description": "Offline-first Windows writing assistant with optional AI correction",
   "author": "Nisar Ahmad",
   "license": "MIT",
   "repository": "https://github.com/nisar87/ClearWrite.git",
-  "engines": { "node": ">=22.12" },
+  "engines": {
+    "node": ">=22.12"
+  },
   "private": true,
   "type": "module",
   "main": "src/main.js",
   "scripts": {
+    "pretest": "node --test src/updates.test.js",
+    "check:updates": "node --check src/updates.js && node --check src/updates.test.js",
     "dist:win": "node scripts/build-distribution.js",
     "dist:verify": "node scripts/verify-distribution.js",
     "start": "electron .",
@@ -21,6 +25,7 @@
     "test": "node --test src/windows-input.test.js src/gemini.test.js src/live-proofread.test.js src/monitor-session.test.js src/panel-position.test.js src/panel-lifecycle.test.js src/shortcut.test.js src/proofreading-mode.test.js src/personal-dictionary.test.js src/monitoring.test.js src/local-proofread.test.js src/context-spelling.test.js src/editor-reader.test.js"
   },
   "dependencies": {
+    "electron-updater": "6.8.11",
     "harper.js": "^3.0.0",
     "mnemonist": "0.40.7"
   },

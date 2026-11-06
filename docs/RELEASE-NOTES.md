@@ -1,10 +1,16 @@
-# ClearWrite 0.2.0-beta.1
+# ClearWrite 0.2.0-beta.2
 
 Windows x64 personal/noncommercial beta. Download the Setup EXE for normal
 installation, or extract the entire ZIP and run ClearWrite.exe. Node.js/npm,
 developer tools and separate dictionary downloads are not required.
 
 ## Included
+
+- Setup-installed clients can check GitHub for updates automatically or manually,
+  download after approval, and restart/install after confirmation. No forced
+  updates, downgrades, AI-provider update calls, or automatic install-on-quit.
+- Settings > Updates includes progress, cancellation, retry, a release-notes link,
+  and an automatic-check preference. ZIP/source copies remain manual-update only.
 
 - Offline English spelling/basic grammar with Harper, expanded spelling candidates
   and partial statistical context; no account needed.
@@ -31,6 +37,8 @@ developer tools and separate dictionary downloads are not required.
 - Unit tests and packaged smoke checks do not establish compatibility with every
   editor. A clean-machine installer/uninstaller and full live-app matrix remain
   outstanding; use the shortcut/copy fallback for unsupported editors.
-- No automatic updates. Install the next release manually; user settings persist.
+- Version 0.2.0-beta.1 needs one manual Setup upgrade to receive the updater.
+- Update download integrity uses GitHub HTTPS and SHA-512 metadata. Windows
+  publisher signing still requires a certificate; this beta remains unsigned.
 
 See GETTING-STARTED.md bundled beside ClearWrite.exe for setup, privacy and removal.

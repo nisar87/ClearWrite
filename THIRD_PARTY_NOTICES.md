@@ -35,6 +35,10 @@ ClearWrite's own source code is licensed under the MIT License (see `LICENSE`). 
 
 ## Other npm dependencies
 
+`electron-updater` 6.8.11 (MIT), from electron-userland/electron-builder,
+provides Windows NSIS update discovery, checksum-verified downloads and explicit
+installation. Its runtime dependency licenses are retained in the package.
+
 Other packages pulled in by Electron and Harper (for example `fflate`, `@electron/get`, `semver`, `debug`) are listed with their licenses in `package-lock.json` and keep their license files in `node_modules/`.
 
 ## Optional: Sign in with ChatGPT DevKit (`@siwc/local`)

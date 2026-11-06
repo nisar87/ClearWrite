@@ -85,7 +85,9 @@ await build({
     electronVersion: manifest.devDependencies.electron,
     electronDist: path.join(root, 'node_modules/electron/dist'),
     asar: false, npmRebuild: false,
-    publish: [{ provider: 'github', owner: 'nisar87', repo: 'ClearWrite', releaseType: 'prerelease' }],
+    publish: [{ provider: 'github', owner: 'nisar87', repo: 'ClearWrite',
+      channel: manifest.version.includes('-') ? 'beta' : 'latest',
+      releaseType: manifest.version.includes('-') ? 'prerelease' : 'release' }],
     generateUpdatesFilesForAllChannels: true,
     files: ['**/*'],
     extraFiles: [
@@ -106,6 +108,13 @@ await build({
   },
 });
 const artifacts = (await readdir(output)).filter((name) => name.includes(manifest.version) && /\.(exe|zip)$/.test(name));
+const yaml = createRequire(import.meta.url)('js-yaml');
+const channel = manifest.version.includes('-') ? 'beta' : 'latest';
+const updateInfo = yaml.load(await readFile(path.join(output, `${channel}.yml`), 'utf8'));
+const installerName = `ClearWrite-${manifest.version}-Setup-x64.exe`;
+const installerInfo = updateInfo.files?.find((file) => file.url === installerName);
+const installerHash = createHash('sha512').update(await readFile(path.join(output, installerName))).digest('base64');
+if (updateInfo.version !== manifest.version || installerInfo?.sha512 !== installerHash) throw new Error('Invalid update channel metadata or installer checksum');
 const checksums = [];
 for (const name of artifacts) checksums.push(`${createHash('sha256').update(await readFile(path.join(output, name))).digest('hex')}  ${name}`);
 await writeFile(path.join(output, 'SHA256SUMS.txt'), `${checksums.join('\n')}\n`);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 const directory = path.resolve(process.argv[2] || 'release/win-unpacked');
 const app = path.join(directory, 'resources/app');
@@ -34,5 +35,14 @@ for (const component of ['offline', 'windows']) {
   }
 }
 for (const name of ['GETTING-STARTED.md', 'CLEARWRITE-LICENSE.txt', 'SIWC-DEVKIT-LICENSE.txt', 'THIRD_PARTY_NOTICES.md']) await readFile(path.join(directory, name));
+if (build.dependencies['electron-updater']) {
+  const yaml = createRequire(import.meta.url)('js-yaml');
+  const config = yaml.load(await readFile(path.join(directory, 'resources/app-update.yml'), 'utf8'));
+  assert.equal(config.provider, 'github');
+  assert.equal(config.owner, 'nisar87');
+  assert.equal(config.repo, 'ClearWrite');
+  assert.equal(config.channel || 'latest', build.version.includes('-') ? 'beta' : 'latest');
+  assert.equal(config.token, undefined);
+}
 console.log(JSON.stringify({ passed: true, version: build.version, sourceCommit: build.sourceCommit, sourceDirty: build.sourceDirty,
   runtimePackages: Object.keys(build.dependencies).length, checks: 'allowlist, no links/private filenames/known secret patterns, dependency versions, interop hash, notices' }, null, 2));

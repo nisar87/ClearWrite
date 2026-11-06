@@ -1,4 +1,4 @@
-# ClearWrite 0.2.0-beta.2
+# ClearWrite 0.2.0-beta.3
 
 Windows x64 personal/noncommercial beta. Download the Setup EXE for normal
 installation, or extract the entire ZIP and run ClearWrite.exe. Node.js/npm,

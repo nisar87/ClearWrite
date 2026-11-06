@@ -1,6 +1,6 @@
 {
   "name": "clearwrite-desktop",
-  "version": "0.2.0-beta.2",
+  "version": "0.2.0-beta.3",
   "description": "Offline-first Windows writing assistant with optional AI correction",
   "author": "Nisar Ahmad",
   "license": "MIT",

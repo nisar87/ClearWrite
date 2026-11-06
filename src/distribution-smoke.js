@@ -38,6 +38,9 @@ export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, 
     assert.ok(client && typeof client.signIn === 'function');
     assert.equal(safeStorage.isEncryptionAvailable(), true);
     checks.push('ChatGPT dependency closure and Windows credential encryption: available (no login/inference attempted)');
+    const updater = await import('electron-updater');
+    assert.equal(typeof updater.default.NsisUpdater, 'function');
+    checks.push('Windows updater dependency closure: available (no check/download/install attempted)');
     const powershell = path.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
     const { stdout } = await promisify(execFile)(powershell,
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'focus-monitor.ps1')],

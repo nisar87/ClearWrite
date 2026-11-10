@@ -18,6 +18,7 @@ import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, stopWindowsInput, warmWindowsInput } from './windows-input.js';
+import { reviewAiCorrection, rewriteWarning } from './ai-changes.js';
 import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -785,6 +786,18 @@ async function proofreadMonitorText(text) {
   }
 }
 
+// An AI correction split into individual changes. Changes to numbers, negation or names are
+// listed but not applied until the writer accepts them (see ai-changes.js).
+function aiCorrection(text, output) {
+  const review = reviewAiCorrection(text, output);
+  return {
+    text: review.text,
+    findings: review.findings,
+    needsChoice: unresolvedCount(review.findings),
+    note: review.flagged ? `${review.flagged} change${review.flagged === 1 ? '' : 's'} could alter your meaning and ${review.flagged === 1 ? 'was' : 'were'} not applied. Review ${review.flagged === 1 ? 'it' : 'them'} below.` : '',
+  };
+}
+
 function localSuggestion(text, review, note = '') {
   if (review.error) return null;
   const findings = Array.isArray(review.findings)
@@ -880,7 +893,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
     });
     if (controller.signal.aborted) return;
     if (result.source === 'ai' && isSafeCorrection(text, result.output)) {
-      suggestion = { source: 'ai', sourceLabel: `${providerName()} suggestion`, text: result.output, findings: [], needsChoice: 0, note: '' };
+      suggestion = { source: 'ai', sourceLabel: `${providerName()} suggestion`, ...aiCorrection(text, result.output) };
     } else if (result.source === 'ai') {
       suggestion = localSuggestion(text, await result.local, `${providerName()} returned a rewrite rather than a correction, so it is not shown.`);
     } else if (result.aiError) {
@@ -1086,7 +1099,7 @@ async function runMonitorAction(action, revision) {
   }
   // An edit, field change, dismissal or pause in the meantime aborts or outdates this result.
   if (controller.signal.aborted || !isCurrentRevision(monitorSession, revision)) return;
-  monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: { source: 'ai', action, sourceLabel: `${RESULT_LABELS[action]} · ${providerName()}`, text: output, findings: [], needsChoice: 0, note: '' } });
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: { source: 'ai', action, sourceLabel: `${RESULT_LABELS[action]} · ${providerName()}`, text: output, findings: [], needsChoice: 0, note: rewriteWarning(text, output) } });
   publishAssistantView();
   dispatchPanel({ type: 'result' });
 }
@@ -1367,7 +1380,17 @@ async function transform(action) {
     }
     const output = await router.requestAi(action, selection.text, withTimeout(controller.signal, MANUAL_REQUEST_TIMEOUT_MS));
     if (controller.signal.aborted || manual !== selection) return;
-    Object.assign(selection, { status: 'done', result: output, source: 'ai', findings: [], note: '' });
+    if (action === 'correct') {
+      if (!isSafeCorrection(selection.text, output)) {
+        const local = manualLocalResult(selection.text, await proofreadMonitorText(selection.text), `${providerName()} returned a rewrite rather than a correction, so it is not shown.`);
+        if (manual === selection) Object.assign(selection, local);
+        return;
+      }
+      const correction = aiCorrection(selection.text, output);
+      Object.assign(selection, { status: 'done', result: correction.text, source: 'ai', findings: correction.findings, needsChoice: correction.needsChoice, note: correction.note });
+    } else {
+      Object.assign(selection, { status: 'done', result: output, source: 'ai', findings: [], needsChoice: 0, note: action === 'reply' || action === 'continue' ? '' : rewriteWarning(selection.text, output) });
+    }
   } catch (error) {
     if (controller.signal.aborted || manual !== selection) return;
     if (action === 'correct' && error?.code !== 'OFFLINE_MODE') {

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
+import { stopWindowsInput, validateWindowsInput } from './windows-input.js';
 
 // Explicit developer-only launch mode: no monitoring, provider calls, or sign-in.
 export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, dataDir) {
@@ -26,7 +27,14 @@ export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, 
     const result = await proofreadLocally('I am not quet sure what to do.');
     assert.ok(result.correctedText.includes('quite'), JSON.stringify(result));
     checks.push('offline worker, WASM and context model: correction passed');
-    const { createChatGPT } = await import('@siwc/local');
+    const devkit = await import('@siwc/local').catch(() => null);
+    const build = JSON.parse(await readFile(path.resolve(root, '../build-manifest.json'), 'utf8'));
+    if (!devkit) {
+      assert.equal(build.chatgptLicense, 'not included', 'ChatGPT DevKit missing from a build that should include it');
+      checks.push('ChatGPT DevKit: not included in this build (explicit opt-out)');
+    }
+    const { createChatGPT } = devkit || { createChatGPT: null };
+    if (createChatGPT) {
     const client = createChatGPT({ appName: 'ClearWrite', appId: 'clearwrite-desktop', redirectPort: 0,
       storageDir: path.join(dataDir, 'chatgpt'), openBrowser: async () => { throw new Error('No browser calls allowed in smoke test'); },
       credentialEncryption: {
@@ -38,6 +46,8 @@ export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, 
     assert.ok(client && typeof client.signIn === 'function');
     assert.equal(safeStorage.isEncryptionAvailable(), true);
     checks.push('ChatGPT dependency closure and Windows credential encryption: available (no login/inference attempted)');
+    }
+    assert.equal(safeStorage.isEncryptionAvailable(), true);
     const updater = await import('electron-updater');
     assert.equal(typeof updater.default.NsisUpdater, 'function');
     checks.push('Windows updater dependency closure: available (no check/download/install attempted)');
@@ -47,9 +57,12 @@ export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, 
       { windowsHide: true, timeout: 25000, env: { ...process.env, CLEARWRITE_READER_VALIDATE: '1' } });
     assert.equal(stdout.trim(), 'ok');
     checks.push('packaged Windows accessibility helpers: compile passed');
+    assert.equal(await validateWindowsInput(), true);
+    checks.push('packaged keyboard/clipboard helper: compile passed (no input sent)');
   } catch (cause) { error = cause.stack || String(cause); }
   finally {
     stopLocalProofreader();
+    stopWindowsInput();
     window?.destroy();
     await mkdir(dataDir, { recursive: true });
     await writeFile(path.join(dataDir, 'distribution-smoke.json'), JSON.stringify({ passed: !error, checks, error }, null, 2));

@@ -53,3 +53,51 @@ jobs:
           name: benchmark-results
           path: benchmark/results/
           if-no-files-found: ignore
+
+  # Ready-to-install build on every push: installer + ZIP, package checks, packaged-app smoke test.
+  # CI builds without the optional ChatGPT DevKit (explicit opt-out); Gemini and offline checking
+  # are included. Build the ChatGPT-included package locally as described in docs/DISTRIBUTION.md.
+  package:
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CLEARWRITE_DIST_WITHOUT_CHATGPT: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build installer and ZIP
+        run: npm run dist:win
+
+      - name: Verify the package
+        run: npm run dist:verify
+
+      - name: Smoke-test the packaged app
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'clearwrite-smoke'
+          $env:CLEARWRITE_DATA_DIR = $data
+          $process = Start-Process -FilePath 'release/win-unpacked/ClearWrite.exe' -ArgumentList '--distribution-smoke' -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Smoke test timed out.' }
+          $report = Get-Content (Join-Path $data 'distribution-smoke.json') -Raw
+          Write-Output $report
+          if (-not ($report | ConvertFrom-Json).passed) { throw 'Packaged app smoke test failed.' }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClearWrite-Windows-installer
+          path: |
+            release/*.exe
+            release/*.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30

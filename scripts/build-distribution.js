@@ -61,7 +61,11 @@ async function copyDependency(name, from) {
 }
 
 const dependencies = {};
-for (const name of [...Object.keys(manifest.dependencies), '@siwc/local']) {
+// The ChatGPT DevKit is required unless the build explicitly opts out (CI builds a Gemini and
+// offline-only package this way). Never dropped silently.
+const withoutChatGPT = process.env.CLEARWRITE_DIST_WITHOUT_CHATGPT === '1';
+if (withoutChatGPT) console.log('Building WITHOUT the optional ChatGPT DevKit (CLEARWRITE_DIST_WITHOUT_CHATGPT=1).');
+for (const name of [...Object.keys(manifest.dependencies), ...(withoutChatGPT ? [] : ['@siwc/local'])]) {
   dependencies[name] = await copyDependency(name, root);
 }
 await writeFile(path.join(appDir, 'package.json'), JSON.stringify({
@@ -73,7 +77,7 @@ await writeFile(path.join(appDir, 'build-manifest.json'), JSON.stringify({
   sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()),
   dependencies: Object.fromEntries(bundled),
-  chatgptLicense: 'SIWC-DEVKIT-LICENSE.txt (noncommercial only)',
+  chatgptLicense: withoutChatGPT ? 'not included' : 'SIWC-DEVKIT-LICENSE.txt (noncommercial only)',
 }, null, 2));
 
 await build({

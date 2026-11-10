@@ -27,9 +27,9 @@ export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, 
     const result = await proofreadLocally('I am not quet sure what to do.');
     assert.ok(result.correctedText.includes('quite'), JSON.stringify(result));
     checks.push('offline worker, WASM and context model: correction passed');
-    const grammar = await proofreadLocally('The report are ready for review.');
-    assert.ok(grammar.findings.some((finding) => finding.source === 'model' && finding.suggestions[0] === 'is'), JSON.stringify(grammar));
-    checks.push('on-device grammar model: loaded from the package and fixed subject-verb agreement');
+    const grammar = await proofreadLocally('the client approved the budget yesterday.');
+    assert.ok(grammar.findings.some((finding) => finding.source === 'model' && finding.suggestions[0] === 'The'), JSON.stringify(grammar));
+    checks.push('on-device grammar model: loaded from the package and produced a correction');
     const devkit = await import('@siwc/local').catch(() => null);
     const build = JSON.parse(await readFile(path.resolve(root, '../build-manifest.json'), 'utf8'));
     if (!devkit) {

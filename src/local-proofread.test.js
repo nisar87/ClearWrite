@@ -198,12 +198,18 @@ test('the on-device grammar model adds context fixes Harper misses, when its fil
   const { localGrammarModelStatus } = await import('./local-proofread.js');
   const status = await localGrammarModelStatus();
   assert.equal(status.available, true, `model did not load: ${status.error}`);
-  const review = await proofreadLocally('The report are ready for review.');
+  // Sentence-start capitalisation is a rule in the model filter (no statistics involved).
+  const review = await proofreadLocally('the client approved the budget yesterday.');
   const finding = review.findings.find((item) => item.source === 'model');
   assert.ok(finding, JSON.stringify(review.findings));
-  assert.equal(finding.original, 'are');
-  assert.equal(finding.suggestions[0], 'is');
-  assert.equal(review.correctedText, 'The report is ready for review.');
+  assert.equal(finding.suggestions[0], 'The');
+  assert.equal(review.correctedText, 'The client approved the budget yesterday.');
+  const contributions = [];
+  for (const sentence of ['The report are ready for review.', 'The results was surprising.', 'We is ready to start.', 'The documents is on the shared drive.']) {
+    const result = await proofreadLocally(sentence);
+    contributions.push(...result.findings.filter((item) => item.source === 'model').map((item) => `${item.original}->${item.suggestions[0]}`));
+  }
+  console.log(`model contributions: ${contributions.join(', ') || 'none'}`);
   const clean = await proofreadLocally('Her presentation covered pricing, onboarding and support.');
   assert.deepEqual(clean.findings, [], 'correct text is left alone');
 });

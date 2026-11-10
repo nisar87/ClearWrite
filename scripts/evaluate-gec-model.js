@@ -97,6 +97,9 @@ const report = {
 };
 await mkdir(new URL('../benchmark/results/', import.meta.url), { recursive: true });
 await writeFile(new URL(`../benchmark/results/model-${label}.json`, import.meta.url), `${JSON.stringify(report, null, 2)}\n`);
+for (const row of rows.filter((item) => item.combined[1.5] !== item.harperText)) {
+  console.log(`model adds@1.5 ${row.split} ${row.id}: ${JSON.stringify(row.harperText)} -> ${JSON.stringify(row.combined[1.5])}`);
+}
 for (const row of rows) {
   const out = row.combined[1];
   if (row.clean ? out !== row.text : row.expected && out !== row.expected && out !== row.harperText) {

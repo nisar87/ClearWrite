@@ -5,6 +5,8 @@
 #   setclip <base64>          put text on the clipboard
 #   text                      print {"text":"<base64>"} of the edit control
 #   clip                      print {"clip":"<base64>"} of the clipboard text
+#   setfiles <base64>         put a file drop list (one path) on the clipboard
+#   files / formats           print the clipboard file list / format names (base64, '|'-joined)
 #   exit
 # No other application is touched.
 $ErrorActionPreference = 'Stop'
@@ -75,6 +77,9 @@ $form.Add_Shown({
         'setclip' { [System.Windows.Forms.Clipboard]::SetText((Decode $parts[1])) }
         'text' { $reply = (@{ text = (Encode ([FixtureWin]::GetText())) } | ConvertTo-Json -Compress) }
         'clip' { $reply = (@{ clip = (Encode ([System.Windows.Forms.Clipboard]::GetText())) } | ConvertTo-Json -Compress) }
+        'setfiles' { $list = New-Object System.Collections.Specialized.StringCollection; [void]$list.Add((Decode $parts[1])); [System.Windows.Forms.Clipboard]::SetFileDropList($list) }
+        'files' { $reply = (@{ files = (Encode ((@([System.Windows.Forms.Clipboard]::GetFileDropList()) -join '|'))) } | ConvertTo-Json -Compress) }
+        'formats' { $reply = (@{ formats = (Encode (([System.Windows.Forms.Clipboard]::GetDataObject().GetFormats()) -join '|')) } | ConvertTo-Json -Compress) }
         'foreground' { $reply = (@{ foreground = ([FixtureWin]::GetForegroundWindow() -eq $form.Handle) } | ConvertTo-Json -Compress) }
         default { $reply = 'unknown' }
       }

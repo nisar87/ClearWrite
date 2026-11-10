@@ -14,8 +14,7 @@ $references = @(
 )
 Add-Type -Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'src/editor-reader.cs') -ReferencedAssemblies $references
 $result = [ClearWriteEditorReader]::Read($Window, 0, [string[]]@(), [string[]]@(), $false)
-$focused = [System.Windows.Automation.AutomationElement]::FocusedElement
 [pscustomobject]@{
   active = $result['active']; reason = $result['reason']; reader = $result['reader']; replaceSupported = $result['replaceSupported']
-  hasText = $result.ContainsKey('text'); focusedType = $focused.Current.ControlType.ProgrammaticName
+  hasText = $result.ContainsKey('text'); runtimeId = $result['runtimeId']
 } | ConvertTo-Json -Compress

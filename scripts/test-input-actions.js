@@ -1,15 +1,16 @@
-// Windows integration test for the keyboard/clipboard actions in src/windows-input.js.
-// Uses only a test-owned WinForms window (scripts/input-fixture.ps1). Requires an unlocked
-// interactive desktop. Run with: npm run test:input
+// Windows integration test for the input helper (src/windows-input.js, input-helper.cs).
+// Uses only a test-owned window (scripts/input-fixture.ps1) with a native edit control.
+// Requires an unlocked interactive desktop. Run with: npm run test:input
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, selectFieldInWindow } from '../src/windows-input.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, stopWindowsInput, warmWindowsInput } from '../src/windows-input.js';
 
 const fixturePath = fileURLToPath(new URL('./input-fixture.ps1', import.meta.url));
 const ORIGINAL = 'Please send teh report today.';
+const FIXED = 'Please send the report today.';
 let fixture;
 let hwnd;
 const replies = [];
@@ -35,6 +36,8 @@ async function command(line) {
 
 const fieldText = async () => unb64((await command('text')).text);
 const clipText = async () => unb64((await command('clip')).clip);
+const clipFiles = async () => unb64((await command('files')).files);
+const clipFormats = async () => unb64((await command('formats')).formats).split('|');
 
 before(async () => {
   fixture = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-Sta', '-ExecutionPolicy', 'Bypass', '-File', fixturePath], { stdio: ['pipe', 'pipe', 'inherit'] });
@@ -46,9 +49,11 @@ before(async () => {
   });
   hwnd = JSON.parse(await nextLine()).hwnd;
   assert.ok(Number.isSafeInteger(hwnd) && hwnd > 0);
+  await warmWindowsInput();
 });
 
 after(async () => {
+  stopWindowsInput();
   try { fixture.stdin.write('exit\n'); } catch { /* already closed */ }
   await sleep(300);
   fixture.kill();
@@ -62,65 +67,100 @@ async function reset(selectStart, selectLength) {
   assert.equal(foreground, true, 'The fixture window could not take focus (is the desktop locked or non-interactive?).');
 }
 
-test('capture copies the current selection (waits for the copy instead of a fixed delay)', async () => {
+function fieldRuntimeId() {
+  const script = fileURLToPath(new URL('./read-focused-editor.ps1', import.meta.url));
+  return JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd)], { encoding: 'utf8' }));
+}
+
+test('capture returns the selection and restores the previous clipboard', async () => {
   await reset(0, 6);
   await command(`setclip ${b64('user clipboard')}`);
   const result = await captureSelection();
   assert.equal(result.target, hwnd);
-  assert.notEqual(result.after, result.before, 'the copy was detected');
-  assert.equal(await clipText(), 'Please');
+  assert.equal(result.copied, true);
+  assert.equal(result.text, 'Please');
+  assert.equal(await clipText(), 'user clipboard');
 });
 
-test('verified replace pastes over the selection only when it is still selected', async () => {
+test('capture with nothing selected reports it and leaves the clipboard alone', async () => {
+  await reset(4, 0);
+  await command(`setclip ${b64('user clipboard')}`);
+  const result = await captureSelection();
+  assert.equal(result.copied, false);
+  assert.equal(await clipText(), 'user clipboard');
+});
+
+test('non-text clipboard content (copied files) survives capture and replace', async () => {
+  const file = `${process.env.SystemRoot || 'C:\\Windows'}\\win.ini`;
+  await reset(0, 6);
+  await command(`setfiles ${b64(file)}`);
+  await captureSelection();
+  assert.equal((await clipFiles()).toLowerCase(), file.toLowerCase(), 'files are still on the clipboard after capture');
   await reset(12, 3);
-  const check = await copySelectionInWindow(hwnd);
-  assert.equal(check.changed, true);
-  assert.equal(await clipText(), 'teh');
-  await command(`setclip ${b64('the')}`);
-  await pasteVerifiedToWindow(hwnd, check.runtimeId);
-  await sleep(300);
-  assert.equal(await fieldText(), 'Please send the report today.');
+  await command(`setfiles ${b64(file)}`);
+  await replaceSelectionInWindow({ target: hwnd, expected: 'teh', replacement: 'the' });
+  await sleep(1800);
+  assert.equal(await fieldText(), FIXED);
+  assert.equal((await clipFiles()).toLowerCase(), file.toLowerCase(), 'files are restored after the paste');
 });
 
-test('a lost selection is detected so nothing is pasted at the caret', async () => {
+test('selection replace pastes only while the original text is still selected', async () => {
+  await reset(12, 3);
+  await command(`setclip ${b64('user clipboard')}`);
+  await replaceSelectionInWindow({ target: hwnd, expected: 'teh', replacement: 'the' });
+  const formats = await clipFormats();
+  assert.ok(formats.includes('ExcludeClipboardContentFromMonitorProcessing'), 'temporary content is hidden from clipboard history');
+  await sleep(300);
+  assert.equal(await fieldText(), FIXED);
+  await sleep(1500);
+  assert.equal(await clipText(), 'user clipboard', 'the clipboard is restored after the paste');
+});
+
+test('a lost selection is refused, so nothing is pasted at the caret', async () => {
   await reset(5, 0);
   await command(`setclip ${b64('marker')}`);
-  const check = await copySelectionInWindow(hwnd);
-  assert.equal(check.changed, false, 'copying an empty selection changes nothing');
-  assert.equal(await clipText(), 'marker');
+  await assert.rejects(replaceSelectionInWindow({ target: hwnd, expected: 'teh', replacement: 'the' }), /no longer selected/);
   assert.equal(await fieldText(), ORIGINAL);
+  assert.equal(await clipText(), 'marker');
 });
 
-test('verified paste refuses when the focused element changed', async () => {
-  await reset(12, 3);
-  await command(`setclip ${b64('XYZ')}`);
-  await assert.rejects(pasteVerifiedToWindow(hwnd, '42.0.0.1'), /focused text field changed/);
-  await sleep(200);
+test('a different selection is refused', async () => {
+  await reset(0, 6);
+  await command(`setclip ${b64('marker')}`);
+  await assert.rejects(replaceSelectionInWindow({ target: hwnd, expected: 'teh', replacement: 'the' }), /no longer selected/);
   assert.equal(await fieldText(), ORIGINAL);
+  assert.equal(await clipText(), 'marker');
 });
 
 test('the production reader accepts a native edit in another app as replaceable', async () => {
   await reset(0, 0);
-  const { execFileSync } = await import('node:child_process');
-  const script = fileURLToPath(new URL('./read-focused-editor.ps1', import.meta.url));
-  const result = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd)], { encoding: 'utf8' }));
+  const result = fieldRuntimeId();
   assert.equal(result.active, true);
   assert.equal(result.reader, 'value');
   assert.equal(result.replaceSupported, true);
+  assert.ok(result.runtimeId);
 });
 
-test('whole-field apply selects exactly the field text before pasting, and refuses changed text', async () => {
+test('whole-field apply verifies the field, selects all of it, and never duplicates text', async () => {
   await reset(3, 0);
-  const runtimeId = (await copySelectionInWindow(hwnd)).runtimeId;
-  assert.ok(runtimeId, 'the focused edit control has a UI Automation runtime id');
+  const { runtimeId } = fieldRuntimeId();
   await command(`setclip ${b64('marker')}`);
-  await assert.rejects(selectFieldInWindow(hwnd, 'Different text', runtimeId), /text changed/);
-  assert.equal(await clipText(), 'marker', 'nothing was copied or pasted');
-  const selected = await selectFieldInWindow(hwnd, ORIGINAL, runtimeId);
-  assert.equal(selected.changed, true);
-  assert.equal(await clipText(), ORIGINAL, 'the whole field (not just part of it) is selected');
-  await command(`setclip ${b64('Please send the report today.')}`);
-  await pasteVerifiedToWindow(hwnd, runtimeId);
+  await assert.rejects(replaceFieldInWindow({ target: hwnd, runtimeId, expected: 'Different text', replacement: FIXED }), /text changed/);
+  await assert.rejects(replaceFieldInWindow({ target: hwnd, runtimeId: '42.1', expected: ORIGINAL, replacement: FIXED }), /field changed/);
+  assert.equal(await fieldText(), ORIGINAL);
+  assert.equal(await clipText(), 'marker');
+  await replaceFieldInWindow({ target: hwnd, runtimeId, expected: ORIGINAL, replacement: FIXED });
   await sleep(300);
-  assert.equal(await fieldText(), 'Please send the report today.', 'the text is replaced, not duplicated');
+  assert.equal(await fieldText(), FIXED, 'the text is replaced, not duplicated');
+  await sleep(1500);
+  assert.equal(await clipText(), 'marker');
+});
+
+test('warm helper requests are fast (no new PowerShell process per action)', async () => {
+  await reset(0, 6);
+  const started = performance.now();
+  await captureSelection();
+  const elapsed = performance.now() - started;
+  console.log(`warm capture: ${Math.round(elapsed)} ms`);
+  assert.ok(elapsed < 1500);
 });

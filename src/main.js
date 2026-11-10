@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, selectFieldInWindow } from './windows-input.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, stopWindowsInput, warmWindowsInput } from './windows-input.js';
 import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -167,22 +167,6 @@ async function initChatGPT() {
     },
   });
   state.chatgptAvailable = true;
-}
-
-function readClipboardSnapshot() {
-  const formats = clipboard.availableFormats();
-  const snapshot = {};
-  try { if (formats.includes('text/plain')) snapshot.text = clipboard.readText(); } catch { }
-  try { if (formats.includes('text/html')) snapshot.html = clipboard.readHTML(); } catch { }
-  try { if (formats.includes('text/rtf')) snapshot.rtf = clipboard.readRTF(); } catch { }
-  try { if (formats.some((format) => format.startsWith('image/'))) snapshot.image = clipboard.readImage(); } catch { }
-  if (formats.length === 0) return null;
-  return snapshot;
-}
-
-function restoreClipboard(snapshot) {
-  if (!snapshot || !Object.keys(snapshot).length) clipboard.clear();
-  else clipboard.write(snapshot);
 }
 
 let lastPublishedMonitorStatus = '';
@@ -956,13 +940,9 @@ async function writeToMonitoredField(kind, replacement, expected) {
   pendingWrite = { kind, key: monitorSession.key, before: expected, text: replacement, done: false };
   publishAssistantView();
   try {
-    await pasteOverVerifiedSelection({
-      select: () => selectFieldInWindow(snapshot.target, expected, snapshot.runtimeId),
-      expected,
-      replacement,
-      target: snapshot.target,
-      mismatch: 'ClearWrite could not select exactly this field\'s text, so nothing was replaced. Use Copy instead.',
-    });
+    // The helper verifies the field and its text, selects it whole, confirms the selection by
+    // copying it, pastes, and restores the user's clipboard.
+    await replaceFieldInWindow({ target: snapshot.target, runtimeId: snapshot.runtimeId, expected, replacement });
     completePendingWrite();
   } catch (error) {
     if (pendingWrite && !pendingWrite.done) pendingWrite = undefined;
@@ -1270,13 +1250,12 @@ function restartFocusMonitorForSettings() {
 // ---------------------------------------------------------------------------
 async function begin() {
   if (busy) { await restorePanel(); return; }
-  const snapshot = readClipboardSnapshot();
   let opened = false;
   try {
+    // The helper copies the selection and restores the user's clipboard in all its formats.
     const selection = await captureSelection();
-    const text = clipboard.readText();
-    const copied = selection.after !== selection.before;
-    if (copied && text) {
+    const text = selection.text;
+    if (selection.copied && text) {
       if (text.length > 60_000) throw new Error('That selection is too long. Select a smaller passage.');
       // The live field the selection came from, if ClearWrite is watching it. An edit in any
       // other field is a new writing context and replaces this manual session.
@@ -1290,9 +1269,6 @@ async function begin() {
   } catch (error) {
     state.notice = error.message || 'Could not read the selected text.';
     publishState();
-  } finally {
-    try { restoreClipboard(snapshot); }
-    catch { state.notice = 'Windows did not allow ClearWrite to restore the previous clipboard. Please check your clipboard.'; publishState(); }
   }
   // Nothing selected: the shortcut reopens the panel.
   if (!opened) await restorePanel();
@@ -1468,42 +1444,10 @@ async function replaceSelection() {
   await applyMonitorSuggestion();
 }
 
-const normalizeNewlines = (value) => String(value ?? '').replace(/\r\n?/g, '\n');
-
-// Pastes `replacement` only over a selection that has just been copied and found to equal
-// `expected`, in the same window and focused element. Otherwise pasting could insert text at
-// the caret (duplicating it) or over something else. The user's clipboard is restored.
-async function pasteOverVerifiedSelection({ select, expected, replacement, target, mismatch }) {
-  const snapshot = readClipboardSnapshot();
-  let pasted = false;
-  try {
-    const check = await select();
-    const copied = check.changed ? clipboard.readText() : '';
-    if (!check.changed || normalizeNewlines(copied) !== normalizeNewlines(expected)) throw new Error(mismatch);
-    clipboard.writeText(replacement);
-    await pasteVerifiedToWindow(target, check.runtimeId);
-    pasted = true;
-  } finally {
-    // After a paste, wait until the app has read the clipboard; otherwise restore at once.
-    const restore = () => {
-      try { if (!pasted || clipboard.readText() === replacement) restoreClipboard(snapshot); }
-      catch { /* Keep the current clipboard. */ }
-    };
-    if (pasted) setTimeout(restore, 1200);
-    else restore();
-  }
-}
-
-// Replace only what the writer selected: the selection is copied again in the original app
-// and must still match the text that was checked.
+// Replace only what the writer selected: the helper re-copies the selection in the original
+// app and pastes only if it still equals the checked text.
 function replaceVerifiedSelection(selection) {
-  return pasteOverVerifiedSelection({
-    select: () => copySelectionInWindow(selection.target),
-    expected: selection.text,
-    replacement: selection.result,
-    target: selection.target,
-    mismatch: 'The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.',
-  });
+  return replaceSelectionInWindow({ target: selection.target, expected: selection.text, replacement: selection.result });
 }
 
 function updateResult(value) {
@@ -1784,6 +1728,8 @@ else {
     state.dictionaryLocation = personalDictionary.file;
     applyLocalCheckerConfig();
     void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
+    // Compile the keyboard/clipboard helper once now, so the first shortcut or Apply is fast.
+    void warmWindowsInput().then(() => startup('input helper ready')).catch((error) => startup(`input helper warmup failed: ${error.message}`));
     await createTray();
     startup('tray ready');
     try { await initUpdates(); }
@@ -1820,6 +1766,7 @@ app.on('before-quit', () => {
   liveRequest?.abort();
   focusMonitor?.kill();
   stopLocalProofreader();
+  stopWindowsInput();
   globalShortcut.unregisterAll();
   tray?.destroy();
   chatgpt.cancelSignIn();

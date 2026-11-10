@@ -37,6 +37,13 @@ export function createContextSpeller({ unigrams, bigrams }) {
     return Math.min(4, Math.log10(1 + count / Math.max(1, expected)));
   }
   return {
+    // Bigram association of `word` with its neighbours (0 when unknown). Used to check whether a
+    // proposed word fits its context better than the original.
+    contextFit(left, word, right) {
+      const w = String(word || '').toLowerCase();
+      return (left ? lift(String(left).toLowerCase(), w) : 0) + (right ? lift(w, String(right).toLowerCase()) : 0);
+    },
+    knows(word) { return frequencies.has(String(word || '').toLowerCase()); },
     rank({ text, start, end, candidates }) {
       const points = [...text];
       const original = points.slice(start, end).join('');

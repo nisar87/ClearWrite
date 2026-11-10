@@ -109,6 +109,30 @@ test('the production reader accepts a native edit in another app as replaceable'
   assert.equal(result.replaceSupported, true);
 });
 
+test('diagnostic variants', async () => {
+  await reset(0, 0);
+  const { execFileSync } = await import('node:child_process');
+  const { writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const body = (extra) => `$ErrorActionPreference='Stop'; Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; ${extra} $f=[System.Windows.Automation.AutomationElement]::FocusedElement; $f.Current.ControlType.ProgrammaticName + ' ' + $f.Current.ClassName`;
+  const file = `${tmpdir()}\\cw-diag.ps1`;
+  const variants = {
+    commandPlain: ['-NoProfile', '-Mta', '-Command', body('')],
+    commandNonInteractive: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Mta', '-ExecutionPolicy', 'Bypass', '-Command', body('')],
+    commandSta: ['-NoProfile', '-Command', body('')],
+    commandWindowsBase: ['-NoProfile', '-Mta', '-Command', body('Add-Type -AssemblyName WindowsBase; Add-Type -AssemblyName Accessibility;')],
+    commandFromHandle: ['-NoProfile', '-Mta', '-Command', body(`$null=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]${hwnd});`)],
+    commandRootFirst: ['-NoProfile', '-Mta', '-Command', body('$null=[System.Windows.Automation.AutomationElement]::RootElement.Current.Name;')],
+  };
+  for (const [name, args] of Object.entries(variants)) {
+    try { console.log('DIAG', name, execFileSync('powershell.exe', args, { encoding: 'utf8' }).trim()); }
+    catch (error) { console.log('DIAG', name, 'error', String(error.stderr || error.message).slice(0, 200)); }
+  }
+  writeFileSync(file, body(''));
+  console.log('DIAG fileMta', execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' }).trim());
+  console.log('DIAG fileSta', execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' }).trim());
+});
+
 test('field replacement checks the exact text before replacing everything', async () => {
   await reset(0, 0);
   const check = await copySelectionInWindow(hwnd).catch(() => ({ runtimeId: '' }));

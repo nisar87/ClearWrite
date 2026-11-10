@@ -10,15 +10,35 @@ const helper = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
-# The Win32 proxies (Edit, RichEdit, ...) used by managed UI Automation need these assemblies;
-# without them a plain edit control in another app is reported as a Pane without ValuePattern.
-# The focus reader loads the same set.
 Add-Type -AssemblyName WindowsBase
-Add-Type -AssemblyName Accessibility
-Add-Type -TypeDefinition @"
+# UI Automation is queried from compiled C#, like the focus reader. Called directly from a
+# PowerShell expression, managed UIA reported a native edit control in another app as a Pane
+# without ValuePattern (verified on a Windows runner), so Apply refused ordinary fields.
+$uiaReferences = @(
+  ([System.Windows.Automation.AutomationElement].Assembly.Location)
+  ([System.Windows.Automation.AutomationIdentifier].Assembly.Location)
+  ([System.Windows.Rect].Assembly.Location)
+)
+Add-Type -ReferencedAssemblies $uiaReferences -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Windows.Automation;
 public static class ClearWriteInput {
+  public static string FocusedRuntimeId() {
+    var focused = AutomationElement.FocusedElement;
+    return focused == null ? "" : string.Join(".", focused.GetRuntimeId());
+  }
+  // Empty string when the focused field is the expected, writable field with exactly the
+  // expected text; otherwise the reason nothing may be replaced.
+  public static string CheckFocusedField(string runtimeId, string expected) {
+    var focused = AutomationElement.FocusedElement;
+    if (focused == null) return "The original text field is no longer focused. Nothing was replaced.";
+    if (string.Join(".", focused.GetRuntimeId()) != runtimeId) return "The focused text field changed. Nothing was replaced.";
+    object pattern;
+    if (!focused.TryGetCurrentPattern(ValuePattern.Pattern, out pattern) || ((ValuePattern)pattern).Current.IsReadOnly) return "This text field cannot be safely replaced.";
+    if (!string.Equals(((ValuePattern)pattern).Current.Value, expected, StringComparison.Ordinal)) return "The text changed since this suggestion was created. Nothing was replaced.";
+    return "";
+  }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public MOUSEINPUT mi; }
@@ -88,11 +108,6 @@ public static class ClearWriteInput {
   static INPUT Key(ushort key, uint flags) { var input = new INPUT(); input.type = 1; input.U.ki.wVk = key; input.U.ki.dwFlags = flags; return input; }
 }
 "@
-# Resolve the target window before asking for the focused element, as the focus reader does.
-function Get-FocusedElement([IntPtr]$window) {
-  try { $null = [System.Windows.Automation.AutomationElement]::FromHandle($window) } catch { }
-  [System.Windows.Automation.AutomationElement]::FocusedElement
-}
 switch ($env:CLEARWRITE_ACTION) {
   'validate' {
     $size = [Runtime.InteropServices.Marshal]::SizeOf([type][ClearWriteInput+INPUT])
@@ -119,7 +134,7 @@ switch ($env:CLEARWRITE_ACTION) {
     Start-Sleep -Milliseconds 120
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
     $runtimeId = ''
-    try { $focused = Get-FocusedElement $target; if ($null -ne $focused) { $runtimeId = [string]::Join('.', $focused.GetRuntimeId()) } } catch { }
+    try { $runtimeId = [ClearWriteInput]::FocusedRuntimeId() } catch { }
     $before = [ClearWriteInput]::GetClipboardSequenceNumber()
     [ClearWriteInput]::Chord(0x43)
     $changed = [ClearWriteInput]::WaitForClipboard($before, 900)
@@ -129,11 +144,7 @@ switch ($env:CLEARWRITE_ACTION) {
     # Pastes only if the same window and (when known) the same focused element are still active.
     $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
-    if ($env:CLEARWRITE_RUNTIME_ID) {
-      $focused = Get-FocusedElement $target
-      $runtimeId = if ($null -ne $focused) { [string]::Join('.', $focused.GetRuntimeId()) } else { '' }
-      if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
-    }
+    if ($env:CLEARWRITE_RUNTIME_ID -and [ClearWriteInput]::FocusedRuntimeId() -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
     [ClearWriteInput]::Chord(0x56)
     'ok'
   }
@@ -142,13 +153,8 @@ switch ($env:CLEARWRITE_ACTION) {
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
     Start-Sleep -Milliseconds 180
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
-    $focused = Get-FocusedElement $target
-    if ($null -eq $focused) { throw 'The original text field is no longer focused. Nothing was replaced.' }
-    $runtimeId = [string]::Join('.', $focused.GetRuntimeId())
-    if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
-    $valuePattern = $null
-    if (-not $focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern) -or $valuePattern.Current.IsReadOnly) { throw 'This text field cannot be safely replaced.' }
-    if ($valuePattern.Current.Value -cne $env:CLEARWRITE_EXPECTED_TEXT) { throw 'The text changed since this suggestion was created. Nothing was replaced.' }
+    $problem = [ClearWriteInput]::CheckFocusedField($env:CLEARWRITE_RUNTIME_ID, $env:CLEARWRITE_EXPECTED_TEXT)
+    if ($problem) { throw $problem }
     [ClearWriteInput]::Chord(0x41)
     Start-Sleep -Milliseconds 80
     [ClearWriteInput]::Chord(0x56)

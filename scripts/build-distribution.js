@@ -22,7 +22,11 @@ for (const name of ['src', 'public', 'assets', 'LICENSE', 'SIWC-DEVKIT-LICENSE.t
 }
 
 const bundled = new Map();
-async function copyDependency(name, from) {
+// `parent` is the package folder (inside the app) whose dependency this is. A second version of
+// a package already placed at the top level is nested under the package that needs it, which is
+// where Node's resolution looks first.
+const nested = new Set();
+async function copyDependency(name, from, parent = appDir) {
   const resolver = createRequire(path.join(from, 'package.json'));
   let packageFile;
   // Resolve package directories directly: ESM-only packages may hide package.json
@@ -36,12 +40,14 @@ async function copyDependency(name, from) {
   if (!packageFile) throw new Error(`Cannot locate installed runtime package ${name}`);
   const source = await realpath(path.dirname(packageFile));
   const metadata = JSON.parse(await readFile(path.join(source, 'package.json'), 'utf8'));
+  let destination = path.join(appDir, 'node_modules', name);
   if (bundled.has(name)) {
-    if (bundled.get(name) !== metadata.version) throw new Error(`Conflicting versions of ${name}`);
-    return metadata.version;
-  }
-  bundled.set(name, metadata.version);
-  const destination = path.join(appDir, 'node_modules', name);
+    if (bundled.get(name) === metadata.version) return metadata.version;
+    if (parent === appDir) throw new Error(`Conflicting versions of ${name}`);
+    destination = path.join(parent, 'node_modules', name);
+    if (nested.has(destination)) return metadata.version;
+    nested.add(destination);
+  } else bundled.set(name, metadata.version);
   await cp(source, destination, {
     recursive: true, dereference: true,
     filter: (file) => {
@@ -58,12 +64,12 @@ async function copyDependency(name, from) {
     }
     await readFile(path.join(destination, 'dist/index.js'));
   }
-  for (const dependency of Object.keys(metadata.dependencies || {})) await copyDependency(dependency, source);
+  for (const dependency of Object.keys(metadata.dependencies || {})) await copyDependency(dependency, source, destination);
   // Optional dependencies hold platform binaries (for example sharp's Windows build): copy the
   // ones npm installed for this platform, skip the rest.
   for (const dependency of Object.keys(metadata.optionalDependencies || {})) {
     if (dependency === '@siwc/local') continue;
-    try { await copyDependency(dependency, source); } catch (error) { if (!/Cannot locate/.test(error.message)) throw error; }
+    try { await copyDependency(dependency, source, destination); } catch (error) { if (!/Cannot locate/.test(error.message)) throw error; }
   }
   return metadata.version;
 }

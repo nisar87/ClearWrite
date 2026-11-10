@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('clearWrite', {
   setMonitor: (enabled) => ipcRenderer.invoke('app:set-monitor', enabled),
   setProofreadingMode: (mode) => ipcRenderer.invoke('app:set-proofreading-mode', mode),
   setDialect: (dialect) => ipcRenderer.invoke('app:set-dialect', dialect),
+  setAiScope: (scope) => ipcRenderer.invoke('app:set-ai-scope', scope),
   listDictionary: () => ipcRenderer.invoke('dictionary:list'),
   addDictionaryWord: (word) => ipcRenderer.invoke('dictionary:add', word),
   removeDictionaryWord: (word) => ipcRenderer.invoke('dictionary:remove', word),

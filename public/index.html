@@ -33,7 +33,11 @@
           <div class="settings-heading"><div><span class="eyebrow">PROOFREADING MODE</span><h2 id="mode-heading">Where should your writing be checked?</h2></div></div>
           <div class="mode-options" role="radiogroup" aria-labelledby="mode-heading">
             <label class="mode-option"><input type="radio" name="proofreading-mode" value="offline" id="mode-offline"><span><b>Offline only</b><small>Spelling and basic grammar are checked on this device by the bundled Harper checker. No account, API key, or internet connection is needed, and no writing is sent anywhere. English only; it catches common mistakes, not every mistake.</small></span></label>
-            <label class="mode-option"><input type="radio" name="proofreading-mode" value="ai" id="mode-ai"><span><b>AI-assisted</b><small id="mode-ai-detail">After you pause, eligible text from the field you are editing is sent to your selected AI provider for context-aware correction. Rephrase, tone, continue, and reply actions become available. If a request fails, the on-device result is shown instead.</small></span></label>
+            <label class="mode-option"><input type="radio" name="proofreading-mode" value="ai" id="mode-ai"><span><b>AI-assisted</b><small id="mode-ai-detail">After you pause, text the device could not settle (or every changed paragraph, if you choose) is sent to your selected AI provider for context-aware correction. Rephrase, tone, continue, and reply actions become available. If a request fails, the on-device result is shown instead.</small></span></label>
+          </div>
+          <div class="mode-options scope-options" role="radiogroup" aria-label="When AI-assisted is on, what is sent">
+            <label class="mode-option"><input type="radio" name="ai-scope" value="unsure" id="scope-unsure"><span><b>Ask the AI only when unsure</b><small>The device checks everything first. Only paragraphs it could not settle are sent; the rest never leave this PC. Fewer requests, more private.</small></span></label>
+            <label class="mode-option"><input type="radio" name="ai-scope" value="all" id="scope-all"><span><b>Send every changed paragraph</b><small>Most thorough: the AI can also catch mistakes the device did not notice.</small></span></label>
           </div>
           <p class="mode-note" id="mode-note" role="status"></p>
         </section>

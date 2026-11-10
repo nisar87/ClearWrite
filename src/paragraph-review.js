@@ -16,11 +16,16 @@ export function splitParagraphs(text) {
     cursor = match.index + match[0].length;
   }
   pieces.push(text.slice(cursor));
+  let offset = 0;
   return pieces.map((value, index) => {
     const separator = index % 2 === 1;
     const lead = separator ? '' : value.match(/^\s*/u)[0];
     const trail = separator ? '' : value.slice(lead.length).match(/\s*$/u)[0];
-    return { value, separator, lead, trail, core: separator ? '' : value.slice(lead.length, value.length - trail.length) };
+    const start = offset + [...lead].length;
+    const core = separator ? '' : value.slice(lead.length, value.length - trail.length);
+    offset += [...value].length;
+    // start/end: the core's position in code points of the whole text.
+    return { value, separator, lead, trail, core, start, end: start + [...core].length };
   });
 }
 
@@ -45,14 +50,20 @@ export function createParagraphCache(limit = 200) {
 }
 
 // correct(paragraph) returns the corrected paragraph (one provider request).
-// Returns { output, sent, reused, sentCharacters }.
-export async function correctByParagraph(text, { correct, cache, cacheKey = '', concurrency = 2 }) {
+// shouldSend(start, end), when given, decides per paragraph whether it goes to the provider at
+// all (the "only when unsure" scope); paragraphs not sent keep their text.
+// Returns { output, sent, reused, skipped, sentCharacters, sentRanges }.
+export async function correctByParagraph(text, { correct, cache, cacheKey = '', concurrency = 2, shouldSend }) {
   const pieces = splitParagraphs(text);
   const results = pieces.map((piece) => piece.value);
   const work = [];
   let reused = 0;
+  let skipped = 0;
+  const sentRanges = [];
   pieces.forEach((piece, index) => {
     if (piece.separator || !hasProofreadableProse(piece.core)) return;
+    if (shouldSend && !shouldSend(piece.start, piece.end)) { skipped += 1; return; }
+    sentRanges.push([piece.start, piece.end]);
     const key = `${cacheKey}\u0000${piece.core}`;
     const cached = cache?.get(key);
     if (cached !== undefined) {
@@ -76,5 +87,5 @@ export async function correctByParagraph(text, { correct, cache, cacheKey = '', 
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, work.length) }, worker));
-  return { output: results.join(''), sent: work.length, reused, sentCharacters };
+  return { output: results.join(''), sent: work.length, reused, skipped, sentCharacters, sentRanges };
 }

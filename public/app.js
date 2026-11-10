@@ -178,6 +178,10 @@ function renderProofreading(state, { isGemini, connected }) {
     }
   }
   select.value = state.englishDialect || 'american';
+  document.querySelectorAll('input[name="ai-scope"]').forEach((input) => {
+    input.checked = input.value === (state.aiReviewScope || 'unsure');
+    input.disabled = state.proofreadingMode !== 'ai';
+  });
   const list = $('dictionary-list');
   list.replaceChildren(...(state.dictionaryWords || []).map((word) => {
     const item = document.createElement('li');
@@ -237,6 +241,13 @@ document.querySelectorAll('input[name="proofreading-mode"]').forEach((input) => 
     showNotice(error.message);
     if (current) render(current);
   }
+}));
+document.querySelectorAll('input[name="ai-scope"]').forEach((input) => input.addEventListener('change', async () => {
+  if (!input.checked) return;
+  try {
+    await requireApi('setAiScope')(input.value);
+    showNotice(input.value === 'unsure' ? 'Only text the device could not settle is sent to the AI.' : 'Every changed paragraph is sent to the AI for review.', true);
+  } catch (error) { showNotice(error.message, true); }
 }));
 $('dialect-select').addEventListener('change', async () => {
   try { await requireApi('setDialect')($('dialect-select').value); showNotice('English dialect saved.', true); }

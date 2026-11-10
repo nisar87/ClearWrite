@@ -66,3 +66,20 @@ test('each paragraph request still goes through the Offline only gate', async ()
   assert.equal(offline.source, 'local');
   assert.equal(calls.length, 2);
 });
+
+test('only paragraphs the device is unsure about are sent; the rest never leave', async () => {
+  const sent = [];
+  const text = 'Please send teh report today.\n\nThe meeting moved to Friday morning.\n\nI will recieve the files tomorrow.';
+  const pieces = splitParagraphs(text).filter((piece) => !piece.separator);
+  assert.deepEqual(pieces.map((piece) => [...text].slice(piece.start, piece.end).join('')), pieces.map((piece) => piece.core), 'offsets are code points of the whole text');
+  const unsureStart = pieces[2].start;
+  const review = await correctByParagraph(text, {
+    correct: async (paragraph) => { sent.push(paragraph); return fix(paragraph); },
+    cache: createParagraphCache(),
+    shouldSend: (start) => start === unsureStart,
+  });
+  assert.deepEqual(sent, ['I will recieve the files tomorrow.']);
+  assert.equal(review.skipped, 2);
+  assert.deepEqual(review.sentRanges, [[pieces[2].start, pieces[2].end]]);
+  assert.equal(review.output, text.replace('recieve', 'receive'), 'unsent paragraphs keep their text');
+});

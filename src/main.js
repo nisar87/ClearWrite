@@ -108,6 +108,9 @@ let state = {
   proofreadingMode: 'offline',
   englishDialect: 'american',
   englishDialects: ENGLISH_DIALECTS,
+  // AI-assisted mode: 'unsure' sends only paragraphs the on-device layers could not settle;
+  // 'all' sends every changed paragraph.
+  aiReviewScope: 'unsure',
   dictionaryWords: [],
   learnedPatterns: [],
   dictionaryLocation: '',
@@ -793,6 +796,30 @@ async function proofreadMonitorText(text) {
   }
 }
 
+// "Only when unsure": a paragraph goes to the AI when the on-device check skipped it or left a
+// finding in it unresolved (several options, none pre-selected).
+function isUnsure(local, start, end) {
+  if (!local.supported) return true;
+  return (local.findings || []).some((finding) => !finding.ignored && !(finding.choice >= 0) && finding.start < end && finding.end > start);
+}
+
+// AI changes for the paragraphs that were sent, on-device findings for the rest.
+function mergeScoped(text, ai, local, sentRanges) {
+  const inside = (finding) => sentRanges.some(([start, end]) => finding.start < end && finding.end > start);
+  const findings = [
+    ...ai.findings.filter(inside),
+    ...(local?.findings || []).filter((finding) => Array.isArray(finding.edits) && !inside(finding)),
+  ].sort((a, b) => a.start - b.start);
+  return {
+    source: 'ai',
+    sourceLabel: `${providerName()} + on-device check`,
+    text: composeText(text, findings),
+    findings,
+    needsChoice: unresolvedCount(findings),
+    note: ai.note,
+  };
+}
+
 // An AI correction split into individual changes. Changes to numbers, negation or names are
 // listed but not applied until the writer accepts them (see ai-changes.js).
 function aiCorrection(text, output) {
@@ -911,20 +938,35 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
   try {
     // Offline only or localOnly: on-device. AI-assisted: provider via the gate, with the
     // on-device result as the fallback when the request fails (the mode is never changed).
+    // The on-device result is computed once: it is the fallback, and in the "only when unsure"
+    // scope it decides which paragraphs go to the provider.
+    const localResult = proofreadMonitorText(text);
+    let aiScope = null;
     const result = await router.correctWithFallback(text, {
-      proofreadLocal: proofreadMonitorText,
+      proofreadLocal: () => localResult,
       signal: withTimeout(controller.signal, AI_REVIEW_TIMEOUT_MS),
       cancelSignal: controller.signal,
       localOnly: !useAi,
       correct: async (value, request) => {
-        const review = await correctByParagraph(value, { correct: request, cache: paragraphCache, cacheKey: providerKey });
-        if (review.sent + review.reused > 1) startup(`AI review by paragraph (sent=${review.sent}, reused=${review.reused}, chars=${review.sentCharacters})`);
+        let shouldSend;
+        if (state.aiReviewScope !== 'all') {
+          const local = await localResult;
+          shouldSend = local.error ? undefined : (start, end) => isUnsure(local, start, end);
+        }
+        const review = await correctByParagraph(value, { correct: request, cache: paragraphCache, cacheKey: providerKey, shouldSend });
+        aiScope = shouldSend ? review.sentRanges : null;
+        startup(`AI review (scope=${shouldSend ? 'unsure' : 'all'}, sent=${review.sent}, reused=${review.reused}, kept on device=${review.skipped}, chars=${review.sentCharacters})`);
         return review.output;
       },
     });
     if (controller.signal.aborted) return;
-    if (result.source === 'ai' && isSafeCorrection(text, result.output)) {
-      suggestion = { source: 'ai', sourceLabel: `${providerName()} suggestion`, ...aiCorrection(text, result.output) };
+    if (result.source === 'ai' && aiScope && !aiScope.length) {
+      // Nothing needed the AI: the on-device result stands and nothing was sent.
+      suggestion = localSuggestion(text, await result.local, '');
+    } else if (result.source === 'ai' && isSafeCorrection(text, result.output)) {
+      suggestion = aiScope
+        ? mergeScoped(text, aiCorrection(text, result.output), localSuggestion(text, await result.local), aiScope)
+        : { source: 'ai', sourceLabel: `${providerName()} suggestion`, ...aiCorrection(text, result.output) };
     } else if (result.source === 'ai') {
       suggestion = localSuggestion(text, await result.local, `${providerName()} returned a rewrite rather than a correction, so it is not shown.`);
     } else if (result.aiError) {
@@ -1101,6 +1143,15 @@ async function setProofreadingMode(value) {
   publishState();
   publishAssistantView();
   return next;
+}
+
+async function setAiReviewScope(value) {
+  if (value !== 'all' && value !== 'unsure') throw new Error('Choose when text is sent to the AI.');
+  state.aiReviewScope = value;
+  reviewCache.clear();
+  await savePreferences();
+  publishState();
+  return value;
 }
 
 async function setEnglishDialect(value) {
@@ -1604,6 +1655,7 @@ handle('app:update-provider', async (provider) => {
 handle('app:set-monitor', setMonitorEnabled);
 handle('app:set-proofreading-mode', setProofreadingMode);
 handle('app:set-dialect', setEnglishDialect);
+handle('app:set-ai-scope', setAiReviewScope);
 handle('dictionary:list', () => personalDictionary.list());
 handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
 handle('learning:clear', async () => { await learningMemory.clear(); state.learnedPatterns = []; publishState(); });
@@ -1695,6 +1747,7 @@ async function loadPreferences() {
       try { state.allowedApps = normalizeProcessNames(raw.allowedApps).filter((name) => !defaultExcludedApps.includes(name)); } catch { }
     }
     if (raw.provider === 'chatgpt' || raw.provider === 'gemini') state.provider = raw.provider;
+    if (raw.aiReviewScope === 'all' || raw.aiReviewScope === 'unsure') state.aiReviewScope = raw.aiReviewScope;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
       for (const provider of ['chatgpt', 'gemini']) {
         if (typeof raw.selectedModels[provider] === 'string' && raw.selectedModels[provider].length <= 120) selectedModels[provider] = raw.selectedModels[provider];
@@ -1750,6 +1803,7 @@ async function writePreferences() {
     panelPinned: panel.pinned,
     proofreadingMode: state.proofreadingMode,
     englishDialect: state.englishDialect,
+    aiReviewScope: state.aiReviewScope,
     privacyDefaultsVersion: 1,
   };
   try { await writeFile(temporary, JSON.stringify(contents, null, 2), { flag: 'wx' }); await rename(temporary, file); }

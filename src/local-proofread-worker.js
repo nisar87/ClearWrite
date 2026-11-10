@@ -2,7 +2,7 @@ import { parentPort } from 'node:worker_threads';
 import { selectSpellingCandidate } from './spelling-selection.js';
 import { loadContextSpeller, protectedSpans } from './context-spelling.js';
 import { composeText, diffSpan } from './finding-edits.js';
-import { modelFindings } from './grammar-model.js';
+import { grammarModelStatus, modelFindings } from './grammar-model.js';
 
 const [{ LocalLinter, Dialect }, { binaryInlined }] = await Promise.all([
   import('harper.js'),
@@ -163,6 +163,10 @@ let queue = Promise.resolve();
 parentPort.on('message', (message) => {
   if (message?.type === 'configure') {
     queue = queue.then(() => configure(message)).then(() => parentPort.postMessage({ type: 'configured' })).catch(() => {});
+    return;
+  }
+  if (message?.type === 'model-status') {
+    queue = queue.then(async () => parentPort.postMessage({ id: message.id, result: await grammarModelStatus() }));
     return;
   }
   const { id, text } = message;

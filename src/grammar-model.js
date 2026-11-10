@@ -15,6 +15,7 @@ const CACHE_LIMIT = 500;
 
 let state;
 let loading;
+let loadError = '';
 
 async function load() {
   if (state !== undefined) return state;
@@ -29,7 +30,8 @@ async function load() {
       env.localModelPath = models;
       const corrector = await pipeline('text2text-generation', manifest.name, { dtype: 'q8' });
       state = { corrector, cache: new Map(), name: manifest.name };
-    } catch {
+    } catch (error) {
+      loadError = String(error?.message || error).slice(0, 300);
       state = null;
     }
     return state;
@@ -39,7 +41,7 @@ async function load() {
 
 export async function grammarModelStatus() {
   const model = await load();
-  return model ? { available: true, name: model.name } : { available: false };
+  return model ? { available: true, name: model.name } : { available: false, error: loadError };
 }
 
 async function correctSentence(model, sentence) {

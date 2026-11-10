@@ -195,6 +195,9 @@ test('the on-device grammar model adds context fixes Harper misses, when its fil
   try { await access(new URL('../assets/models/gec-t5-tiny/onnx/decoder_model_merged_quantized.onnx', import.meta.url)); }
   catch { t.skip('grammar model not fetched (npm run model:fetch)'); return; }
   configureLocalProofreader({ dialect: 'american', words: [] });
+  const { localGrammarModelStatus } = await import('./local-proofread.js');
+  const status = await localGrammarModelStatus();
+  assert.equal(status.available, true, `model did not load: ${status.error}`);
   const review = await proofreadLocally('The report are ready for review.');
   const finding = review.findings.find((item) => item.source === 'model');
   assert.ok(finding, JSON.stringify(review.findings));

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, replaceFieldInWindow } from '../src/windows-input.js';
+import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, selectFieldInWindow } from '../src/windows-input.js';
 
 const fixturePath = fileURLToPath(new URL('./input-fixture.ps1', import.meta.url));
 const ORIGINAL = 'Please send teh report today.';
@@ -109,14 +109,18 @@ test('the production reader accepts a native edit in another app as replaceable'
   assert.equal(result.replaceSupported, true);
 });
 
-test('field replacement checks the exact text before replacing everything', async () => {
-  await reset(0, 0);
-  const check = await copySelectionInWindow(hwnd).catch(() => ({ runtimeId: '' }));
-  assert.ok(check.runtimeId, 'the focused edit control has a UI Automation runtime id');
+test('whole-field apply selects exactly the field text before pasting, and refuses changed text', async () => {
+  await reset(3, 0);
+  const runtimeId = (await copySelectionInWindow(hwnd)).runtimeId;
+  assert.ok(runtimeId, 'the focused edit control has a UI Automation runtime id');
+  await command(`setclip ${b64('marker')}`);
+  await assert.rejects(selectFieldInWindow(hwnd, 'Different text', runtimeId), /text changed/);
+  assert.equal(await clipText(), 'marker', 'nothing was copied or pasted');
+  const selected = await selectFieldInWindow(hwnd, ORIGINAL, runtimeId);
+  assert.equal(selected.changed, true);
+  assert.equal(await clipText(), ORIGINAL, 'the whole field (not just part of it) is selected');
   await command(`setclip ${b64('Please send the report today.')}`);
-  await assert.rejects(replaceFieldInWindow(hwnd, 'Different text', check.runtimeId), /text changed/);
-  assert.equal(await fieldText(), ORIGINAL);
-  await replaceFieldInWindow(hwnd, ORIGINAL, check.runtimeId);
+  await pasteVerifiedToWindow(hwnd, runtimeId);
   await sleep(300);
-  assert.equal(await fieldText(), 'Please send the report today.');
+  assert.equal(await fieldText(), 'Please send the report today.', 'the text is replaced, not duplicated');
 });

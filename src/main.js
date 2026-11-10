@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, replaceFieldInWindow } from './windows-input.js';
+import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, selectFieldInWindow } from './windows-input.js';
 import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -183,19 +183,6 @@ function readClipboardSnapshot() {
 function restoreClipboard(snapshot) {
   if (!snapshot || !Object.keys(snapshot).length) clipboard.clear();
   else clipboard.write(snapshot);
-}
-
-// Puts `text` on the clipboard for a paste, then restores the user's clipboard if nothing
-// else has replaced it in the meantime.
-async function withTemporaryClipboard(text, operation) {
-  const snapshot = readClipboardSnapshot();
-  clipboard.writeText(text);
-  try { return await operation(); }
-  finally {
-    setTimeout(() => {
-      try { if (clipboard.readText() === text) restoreClipboard(snapshot); } catch { /* Keep the pasted text. */ }
-    }, 1200);
-  }
 }
 
 let lastPublishedMonitorStatus = '';
@@ -969,7 +956,13 @@ async function writeToMonitoredField(kind, replacement, expected) {
   pendingWrite = { kind, key: monitorSession.key, before: expected, text: replacement, done: false };
   publishAssistantView();
   try {
-    await withTemporaryClipboard(replacement, () => replaceFieldInWindow(snapshot.target, expected, snapshot.runtimeId));
+    await pasteOverVerifiedSelection({
+      select: () => selectFieldInWindow(snapshot.target, expected, snapshot.runtimeId),
+      expected,
+      replacement,
+      target: snapshot.target,
+      mismatch: 'ClearWrite could not select exactly this field\'s text, so nothing was replaced. Use Copy instead.',
+    });
     completePendingWrite();
   } catch (error) {
     if (pendingWrite && !pendingWrite.done) pendingWrite = undefined;
@@ -1477,31 +1470,40 @@ async function replaceSelection() {
 
 const normalizeNewlines = (value) => String(value ?? '').replace(/\r\n?/g, '\n');
 
-// Replace only what the writer selected. The selection is copied again in the original app
-// and must still match the text that was checked; otherwise pasting would insert the result
-// at the caret (duplicating text) or over a different selection. The user's clipboard is
-// restored afterwards.
-async function replaceVerifiedSelection(selection) {
+// Pastes `replacement` only over a selection that has just been copied and found to equal
+// `expected`, in the same window and focused element. Otherwise pasting could insert text at
+// the caret (duplicating it) or over something else. The user's clipboard is restored.
+async function pasteOverVerifiedSelection({ select, expected, replacement, target, mismatch }) {
   const snapshot = readClipboardSnapshot();
   let pasted = false;
   try {
-    const check = await copySelectionInWindow(selection.target);
+    const check = await select();
     const copied = check.changed ? clipboard.readText() : '';
-    if (!check.changed || normalizeNewlines(copied) !== normalizeNewlines(selection.text)) {
-      throw new Error('The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.');
-    }
-    clipboard.writeText(selection.result);
-    await pasteVerifiedToWindow(selection.target, check.runtimeId);
+    if (!check.changed || normalizeNewlines(copied) !== normalizeNewlines(expected)) throw new Error(mismatch);
+    clipboard.writeText(replacement);
+    await pasteVerifiedToWindow(target, check.runtimeId);
     pasted = true;
   } finally {
     // After a paste, wait until the app has read the clipboard; otherwise restore at once.
     const restore = () => {
-      try { if (!pasted || clipboard.readText() === selection.result) restoreClipboard(snapshot); }
+      try { if (!pasted || clipboard.readText() === replacement) restoreClipboard(snapshot); }
       catch { /* Keep the current clipboard. */ }
     };
     if (pasted) setTimeout(restore, 1200);
     else restore();
   }
+}
+
+// Replace only what the writer selected: the selection is copied again in the original app
+// and must still match the text that was checked.
+function replaceVerifiedSelection(selection) {
+  return pasteOverVerifiedSelection({
+    select: () => copySelectionInWindow(selection.target),
+    expected: selection.text,
+    replacement: selection.result,
+    target: selection.target,
+    mismatch: 'The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.',
+  });
 }
 
 function updateResult(value) {

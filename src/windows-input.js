@@ -39,6 +39,17 @@ public static class ClearWriteInput {
     if (!string.Equals(((ValuePattern)pattern).Current.Value, expected, StringComparison.Ordinal)) return "The text changed since this suggestion was created. Nothing was replaced.";
     return "";
   }
+  // Selects the focused field's whole text through UI Automation when the control supports
+  // it. Classic edit controls ignore Ctrl+A, which is used only as the fallback.
+  public static bool SelectAllFocused() {
+    try {
+      var focused = AutomationElement.FocusedElement;
+      object pattern;
+      if (focused == null || !focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) return false;
+      ((TextPattern)pattern).DocumentRange.Select();
+      return true;
+    } catch (Exception) { return false; }
+  }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public MOUSEINPUT mi; }
@@ -148,17 +159,22 @@ switch ($env:CLEARWRITE_ACTION) {
     [ClearWriteInput]::Chord(0x56)
     'ok'
   }
-  'replace-field' {
+  'select-field' {
+    # Selects the whole verified field and copies it, so ClearWrite can confirm the selection
+    # covers exactly the reviewed text before pasting. Some edit controls ignore Ctrl+A; then
+    # the copy does not match and nothing is replaced. Nothing is pasted here.
     $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
-    if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
-    Start-Sleep -Milliseconds 180
+    if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused. Nothing was replaced.' }
+    Start-Sleep -Milliseconds 120
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
     $problem = [ClearWriteInput]::CheckFocusedField($env:CLEARWRITE_RUNTIME_ID, $env:CLEARWRITE_EXPECTED_TEXT)
     if ($problem) { throw $problem }
-    [ClearWriteInput]::Chord(0x41)
-    Start-Sleep -Milliseconds 80
-    [ClearWriteInput]::Chord(0x56)
-    'ok'
+    if (-not [ClearWriteInput]::SelectAllFocused()) { [ClearWriteInput]::Chord(0x41) }
+    Start-Sleep -Milliseconds 60
+    $before = [ClearWriteInput]::GetClipboardSequenceNumber()
+    [ClearWriteInput]::Chord(0x43)
+    $changed = [ClearWriteInput]::WaitForClipboard($before, 900)
+    [pscustomobject]@{ changed = $changed; runtimeId = $env:CLEARWRITE_RUNTIME_ID } | ConvertTo-Json -Compress
   }
   default { throw 'Unknown input action.' }
 }
@@ -202,9 +218,11 @@ export async function pasteVerifiedToWindow(target, runtimeId = '') {
   await run('paste-verified', target, '', runtimeId);
 }
 
-export async function replaceFieldInWindow(target, expectedText, runtimeId) {
+// Selects and copies the whole field after verifying it is the expected, unchanged field.
+// Returns { changed }: whether the app copied something (see main.js for the comparison).
+export async function selectFieldInWindow(target, expectedText, runtimeId) {
   if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text field is no longer available.');
   if (typeof expectedText !== 'string' || typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
-  await run('replace-field', target, expectedText, runtimeId);
+  const result = JSON.parse(await run('select-field', target, expectedText, runtimeId));
+  return { changed: result.changed === true, runtimeId };
 }
-

@@ -115,3 +115,44 @@ export function mapFindingsFromProtected(findings, protectedDraft) {
       };
     });
 }
+
+// Splits long text into pieces the on-device checker accepts (`maxUnits` UTF-16 units each),
+// preferring paragraph, then line, then sentence, then word boundaries. Each piece records its
+// start in code points so findings can be shifted back into the full text.
+export function splitForChecking(text, maxUnits = 6000) {
+  const pieces = [];
+  let rest = text;
+  let offset = 0;
+  while (rest.length > maxUnits) {
+    const window = rest.slice(0, maxUnits);
+    let cut = -1;
+    for (const pattern of [/\n\s*\n/g, /\n/g, /[.!?]["'”’)\]]*\s+/g, /\s+/g]) {
+      let match;
+      let last = -1;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(window))) last = match.index + match[0].length;
+      if (last > maxUnits / 4) { cut = last; break; }
+    }
+    if (cut <= 0) cut = maxUnits;
+    // Never split a surrogate pair.
+    if (/[\uD800-\uDBFF]/.test(rest[cut - 1])) cut -= 1;
+    const piece = rest.slice(0, cut);
+    pieces.push({ start: offset, text: piece });
+    offset += [...piece].length;
+    rest = rest.slice(cut);
+  }
+  if (rest.length || !pieces.length) pieces.push({ start: offset, text: rest });
+  return pieces;
+}
+
+// Moves findings computed on a piece of text to their position in the full text.
+export function offsetFindings(findings, delta) {
+  if (!delta || !Array.isArray(findings)) return findings || [];
+  const move = (value) => (Number.isSafeInteger(value) ? value + delta : value);
+  return findings.map((finding) => ({
+    ...finding,
+    start: move(finding.start),
+    end: move(finding.end),
+    ...(Array.isArray(finding.edits) ? { edits: finding.edits.map((edit) => ({ ...edit, start: edit.start + delta, end: edit.end + delta })) } : {}),
+  }));
+}

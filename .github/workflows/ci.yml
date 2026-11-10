@@ -35,6 +35,14 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # Integration tests drive test-owned windows only; they need the runner's interactive desktop.
+      - name: Windows input integration tests
+        run: npm run test:input
+
+      - name: Editor reader fixture
+        run: npm run test:editors
+        continue-on-error: true
+
       - name: Offline accuracy benchmark
         run: node scripts/benchmark-offline.js ci
 

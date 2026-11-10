@@ -74,3 +74,30 @@ test('edits that touch a protected URL placeholder are dropped', () => {
   assert.deepEqual(mapped[0].suggestions, ['Opens']);
   assert.equal(composeText(original, mapped), 'Opens https://example.com now.');
 });
+
+test('long text is split at paragraph boundaries and findings shift back into place', async () => {
+  const { splitForChecking, offsetFindings } = await import('./finding-edits.js');
+  const paragraph = 'Please review the report before the meeting starts today. '.repeat(40).trim();
+  const text = [paragraph, paragraph, `${paragraph} Teh end.`].join('\n\n');
+  const pieces = splitForChecking(text, 6000);
+  assert.ok(pieces.length >= 2);
+  assert.equal(pieces.map((piece) => piece.text).join(''), text, 'pieces cover the text exactly');
+  for (const piece of pieces) {
+    assert.ok(piece.text.length <= 6000);
+    assert.equal([...text].slice(piece.start, piece.start + [...piece.text].length).join(''), piece.text);
+  }
+  const last = pieces.at(-1);
+  const local = last.text.indexOf('Teh');
+  const [moved] = offsetFindings([finding(local, local + 3, ['The'], 0, { start: local, end: local + 3 })], last.start);
+  assert.equal(composeText(text, [moved]).endsWith('The end.'), true);
+});
+
+test('splitting never breaks an emoji and falls back to word boundaries', async () => {
+  const { splitForChecking } = await import('./finding-edits.js');
+  const text = '😀word '.repeat(2000);
+  const pieces = splitForChecking(text, 1000);
+  assert.equal(pieces.map((piece) => piece.text).join(''), text);
+  for (const piece of pieces) assert.ok(!/^[\uDC00-\uDFFF]/.test(piece.text) && !/[\uD800-\uDBFF]$/.test(piece.text));
+  const unbroken = 'x'.repeat(2500);
+  assert.deepEqual(splitForChecking(unbroken, 1000).map((piece) => piece.text.length), [1000, 1000, 500]);
+});

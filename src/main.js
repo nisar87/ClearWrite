@@ -17,8 +17,8 @@ import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, pasteToWindow, replaceFieldInWindow } from './windows-input.js';
-import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, unresolvedCount } from './finding-edits.js';
+import { captureSelection, copySelectionInWindow, pasteVerifiedToWindow, replaceFieldInWindow } from './windows-input.js';
+import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || (app.isPackaged
@@ -61,6 +61,7 @@ let pendingWrite;
 let monitorEditedResult;
 const reviewCache = createReviewCache();
 const reviewDebouncer = createDebouncer(REVIEW_DEBOUNCE_MS);
+const LOCAL_CHECK_PIECE_LENGTH = 6000;
 
 // Manual (selection + shortcut) session.
 let manual;
@@ -781,12 +782,33 @@ function handleFocusSnapshot(snapshot) {
   publishAssistantView();
 }
 
+async function proofreadPiece(text) {
+  const protectedDraft = protectUrls(text);
+  const review = await proofreadLocally(protectedDraft.input);
+  const findings = mapFindingsFromProtected(review.findings, protectedDraft);
+  return { ...review, findings, correctedText: review.supported ? restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) : '' };
+}
+
+// The on-device checker takes up to 6,000 characters per request. Longer selections are
+// checked piece by piece at paragraph (or sentence) boundaries and the findings merged, so
+// Correct works on long documents without sending anything off the device.
 async function proofreadMonitorText(text) {
   try {
-    const protectedDraft = protectUrls(text);
-    const review = await proofreadLocally(protectedDraft.input);
-    const findings = mapFindingsFromProtected(review.findings, protectedDraft);
-    return { ...review, findings, correctedText: review.supported ? restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) : '' };
+    const pieces = splitForChecking(text, LOCAL_CHECK_PIECE_LENGTH);
+    if (pieces.length === 1) return await proofreadPiece(text);
+    const findings = [];
+    const reasons = new Set();
+    let supported = false;
+    for (const piece of pieces) {
+      if (!piece.text.trim()) continue;
+      const review = await proofreadPiece(piece.text);
+      if (review.reason) reasons.add(review.reason);
+      if (!review.supported) continue;
+      supported = true;
+      findings.push(...offsetFindings(review.findings, piece.start));
+    }
+    if (supported && !hasEdits(findings) && findings.length) throw new Error('The on-device check returned an unexpected result.');
+    return { supported, findings, correctedText: supported ? composeText(text, findings) : '', reason: [...reasons].join(' ') };
   } catch (error) {
     return { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.', error: true };
   }
@@ -1444,13 +1466,42 @@ async function replaceSelection() {
     const selection = manual;
     if (selection.status !== 'done' || !selection.result) throw new Error('There is no completed suggestion to replace with.');
     if (selection.action === 'reply') throw new Error('Copy the reply and paste it where you want it.');
-    await withTemporaryClipboard(selection.result, () => pasteToWindow(selection.target));
+    await replaceVerifiedSelection(selection);
     state.notice = 'The selected text was replaced.';
     if (manual === selection) closeManual();
     publishState();
     return;
   }
   await applyMonitorSuggestion();
+}
+
+const normalizeNewlines = (value) => String(value ?? '').replace(/\r\n?/g, '\n');
+
+// Replace only what the writer selected. The selection is copied again in the original app
+// and must still match the text that was checked; otherwise pasting would insert the result
+// at the caret (duplicating text) or over a different selection. The user's clipboard is
+// restored afterwards.
+async function replaceVerifiedSelection(selection) {
+  const snapshot = readClipboardSnapshot();
+  let pasted = false;
+  try {
+    const check = await copySelectionInWindow(selection.target);
+    const copied = check.changed ? clipboard.readText() : '';
+    if (!check.changed || normalizeNewlines(copied) !== normalizeNewlines(selection.text)) {
+      throw new Error('The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.');
+    }
+    clipboard.writeText(selection.result);
+    await pasteVerifiedToWindow(selection.target, check.runtimeId);
+    pasted = true;
+  } finally {
+    // After a paste, wait until the app has read the clipboard; otherwise restore at once.
+    const restore = () => {
+      try { if (!pasted || clipboard.readText() === selection.result) restoreClipboard(snapshot); }
+      catch { /* Keep the current clipboard. */ }
+    };
+    if (pasted) setTimeout(restore, 1200);
+    else restore();
+  }
 }
 
 function updateResult(value) {

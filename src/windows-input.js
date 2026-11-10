@@ -70,6 +70,16 @@ public static class ClearWriteInput {
       if (attachedForeground) AttachThreadInput(currentThread, foregroundThread, false);
     }
   }
+  // Waits until the clipboard sequence number moves past "before" (a copy completed), up to
+  // "timeoutMs". Slow apps (Electron, Office under load) can take several hundred ms.
+  public static bool WaitForClipboard(uint before, int timeoutMs) {
+    var started = Environment.TickCount;
+    while (unchecked(Environment.TickCount - started) < timeoutMs) {
+      if (GetClipboardSequenceNumber() != before) { System.Threading.Thread.Sleep(30); return true; }
+      System.Threading.Thread.Sleep(20);
+    }
+    return GetClipboardSequenceNumber() != before;
+  }
   static INPUT Key(ushort key, uint flags) { var input = new INPUT(); input.type = 1; input.U.ki.wVk = key; input.U.ki.dwFlags = flags; return input; }
 }
 "@
@@ -87,14 +97,33 @@ switch ($env:CLEARWRITE_ACTION) {
     $point = New-Object ClearWriteInput+POINT
     [void][ClearWriteInput]::GetCursorPos([ref]$point)
     [ClearWriteInput]::Chord(0x43)
-    Start-Sleep -Milliseconds 180
+    [void][ClearWriteInput]::WaitForClipboard($before, 900)
     $after = [ClearWriteInput]::GetClipboardSequenceNumber()
     [pscustomobject]@{ target = $target; before = $before; after = $after; x = $point.X; y = $point.Y } | ConvertTo-Json -Compress
   }
-  'paste' {
+  'copy-check' {
+    # Re-copies the current selection in the original window so ClearWrite can confirm the
+    # text it is about to replace is still selected. Nothing is pasted here.
     $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
-    if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
-    Start-Sleep -Milliseconds 180
+    if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused. Nothing was replaced.' }
+    Start-Sleep -Milliseconds 120
+    if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
+    $runtimeId = ''
+    try { $focused = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($null -ne $focused) { $runtimeId = [string]::Join('.', $focused.GetRuntimeId()) } } catch { }
+    $before = [ClearWriteInput]::GetClipboardSequenceNumber()
+    [ClearWriteInput]::Chord(0x43)
+    $changed = [ClearWriteInput]::WaitForClipboard($before, 900)
+    [pscustomobject]@{ changed = $changed; runtimeId = $runtimeId } | ConvertTo-Json -Compress
+  }
+  'paste-verified' {
+    # Pastes only if the same window and (when known) the same focused element are still active.
+    $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
+    if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
+    if ($env:CLEARWRITE_RUNTIME_ID) {
+      $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+      $runtimeId = if ($null -ne $focused) { [string]::Join('.', $focused.GetRuntimeId()) } else { '' }
+      if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
+    }
     [ClearWriteInput]::Chord(0x56)
     'ok'
   }
@@ -144,9 +173,17 @@ export async function validateWindowsInput() {
   return (await run('validate')) === 'ok';
 }
 
-export async function pasteToWindow(target) {
+// Re-copies the selection in `target`. Returns { changed, runtimeId }: changed is false
+// when the app copied nothing (usually because nothing is selected any more).
+export async function copySelectionInWindow(target) {
   if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text window is no longer available.');
-  await run('paste', target);
+  const result = JSON.parse(await run('copy-check', target));
+  return { changed: result.changed === true, runtimeId: typeof result.runtimeId === 'string' ? result.runtimeId : '' };
+}
+
+export async function pasteVerifiedToWindow(target, runtimeId = '') {
+  if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text window is no longer available.');
+  await run('paste-verified', target, '', runtimeId);
 }
 
 export async function replaceFieldInWindow(target, expectedText, runtimeId) {

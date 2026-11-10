@@ -1,0 +1,4 @@
+{
+  "reason": "Phase 3: on-device grammar model runtime (Apache-2.0)",
+  "install": ["@huggingface/transformers@^3"]
+}

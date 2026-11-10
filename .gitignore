@@ -16,3 +16,4 @@ Thumbs.db
 # Personal dictionaries are user data (stored in %APPDATA%\ClearWrite by default)
 personal-dictionary*.json
 benchmark/results/
+assets/models/*/

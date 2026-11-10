@@ -1,0 +1,17 @@
+{
+  "name": "gec-t5-tiny",
+  "description": "Sentence-level English grammar correction (T5-efficient-tiny), int8 ONNX for Transformers.js",
+  "source": "https://huggingface.co/rabden/t5-tiny-gec-hone",
+  "baseModel": "https://huggingface.co/visheratin/t5-efficient-tiny-grammar-correction",
+  "license": "MIT (model and base model); trained on a subset of Google's C4_200M synthetic GEC data",
+  "repo": "rabden/t5-tiny-gec-hone",
+  "revision": "",
+  "files": {
+    "config.json": "",
+    "generation_config.json": "",
+    "tokenizer.json": "",
+    "tokenizer_config.json": "",
+    "onnx/encoder_model_quantized.onnx": "",
+    "onnx/decoder_model_merged_quantized.onnx": ""
+  }
+}

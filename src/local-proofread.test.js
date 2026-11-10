@@ -198,12 +198,13 @@ test('the on-device grammar model adds context fixes Harper misses, when its fil
   const { localGrammarModelStatus } = await import('./local-proofread.js');
   const status = await localGrammarModelStatus();
   assert.equal(status.available, true, `model did not load: ${status.error}`);
-  // Sentence-start capitalisation is a rule in the model filter (no statistics involved).
-  const review = await proofreadLocally('the client approved the budget yesterday.');
+  // Measured on the benchmark: Harper misses "to large"; the filtered model fixes it.
+  const review = await proofreadLocally('The file is to large to send.');
   const finding = review.findings.find((item) => item.source === 'model');
   assert.ok(finding, JSON.stringify(review.findings));
-  assert.equal(finding.suggestions[0], 'The');
-  assert.equal(review.correctedText, 'The client approved the budget yesterday.');
+  assert.equal(finding.original, 'to');
+  assert.equal(finding.suggestions[0], 'too');
+  assert.equal(review.correctedText, 'The file is too large to send.');
   const contributions = [];
   for (const sentence of ['The report are ready for review.', 'The results was surprising.', 'We is ready to start.', 'The documents is on the shared drive.']) {
     const result = await proofreadLocally(sentence);

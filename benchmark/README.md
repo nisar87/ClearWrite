@@ -46,6 +46,20 @@ The `grammar` split (20 cases: articles, agreement, repeated words, contractions
 
 Enabling every rule mainly adds style rewrites (for example "I'm" -> "I am") and does not improve exact corrections, so the defaults are kept. Not detected on the device: subject-verb agreement ("The report are"), your/you're, apostrophes in plurals, sentence capitalisation and a missing space after a period. Detected but left for the writer to choose (two options): "Its"/"It's", "Lets"/"Let's", "Their"/"They're". `dont` -> `don't` became an exact fix after the ranker stopped discarding Harper's contraction candidates. Set `CLEARWRITE_HARPER_RULES=all` (benchmark only) to repeat the comparison.
 
+## On-Device Grammar Model (CI, 2026-11-11)
+
+Measured on the GitHub `windows-latest` runner with the larger benchmark (60 grammar, 40 held-out, 40 clean-prose cases; `scripts/evaluate-gec-model.js`, CI job `model-eval`):
+
+| Configuration | Grammar exact (60) | Held-out exact (40) | Wrong changes | Clean sentences changed (40) |
+| --- | ---: | ---: | ---: | ---: |
+| Harper alone | 38 | 25 | 0 | 0 |
+| t5-tiny model alone (through the meaning guard) | 43 | 26 | 28 | 20 |
+| Harper + filtered model, threshold 1.0 | 44 | 28 | 1 | 1 |
+| **Harper + filtered model, threshold 1.5 (shipped)** | **42** | **27** | **0** | **0** |
+| Harper + filtered model, threshold 2.0 | 41 | 27 | 0 | 0 |
+
+The filter (`src/model-filter.js`) keeps one-word substitutions whose bundled word-pair score improves by at least the threshold, plus sentence-start capitalisation, and drops all insertions, deletions and rewrites. The threshold was chosen on the development split; the held-out gain (25 to 27) shows it is not specific to those cases. The model adds about 13 ms per sentence (p50) and about 200 MB of memory. `benchmark/gates.json` now requires at least 42 and 27 exact fixes with zero wrong changes and zero clean-text flags.
+
 ## Architecture And Limits
 
 Only Harper spelling findings and single-word typo findings are expanded. Mnemonist's SymSpell implementation searches bounded prefixes in a 30,000-word index. Full-word typo cost filters the results. A score combines spelling cost, unigram frequency and adjacent-word bigram association; punctuation separates context. A clear statistical winner or an agreeing basic-ranker winner may enter the proposed text. A single Harper recommendation remains available as before. Harper validates selected words in the configured dialect. Actual replacement in another application still requires the user's existing Apply action.

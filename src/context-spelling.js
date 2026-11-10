@@ -62,6 +62,12 @@ export function createContextSpeller({ unigrams, bigrams }) {
         const score = -2 * edits + 0.25 * Math.log10(1 + (frequencies.get(candidate) || 0)) + 0.9 * context;
         return { candidate, edits, context, score };
       }).sort((a, b) => b.score - a.score || a.candidate.localeCompare(b.candidate));
+      // The same letters with an apostrophe added ("dont" -> "don't") is almost certainly the
+      // intended contraction. Harper proposed it, so it is a real word; the statistical model has
+      // no contractions and would otherwise rank it below unrelated common words.
+      const contraction = scored.findIndex((entry) => entry.candidate.includes("'") && entry.candidate.replace(/'/g, '') === word);
+      if (contraction > 0) scored.unshift(...scored.splice(contraction, 1));
+      if (contraction >= 0) scored[0] = { ...scored[0], score: Infinity };
       const best = scored[0];
       const margin = best ? best.score - (scored[1]?.score ?? -Infinity) : 0;
       const contextual = best?.context >= 1;

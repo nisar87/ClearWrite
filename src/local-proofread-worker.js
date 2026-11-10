@@ -13,32 +13,16 @@ const [{ LocalLinter, Dialect }, { binaryInlined }] = await Promise.all([
 const linter = new LocalLinter({ binary: binaryInlined, dialect: Dialect.American });
 const DIALECTS = { american: Dialect.American, british: Dialect.British, australian: Dialect.Australian, canadian: Dialect.Canadian, indian: Dialect.Indian };
 await linter.setup();
-// Benchmark-only switches (never set by the app): report Harper's rule configuration, or
-// enable every rule, to evaluate which disabled rules would help without false alarms.
-if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
+// Benchmark-only switch (never set by the app): enable every Harper rule, or a comma-separated
+// list of extra rules, to measure which disabled rules help without false alarms.
+const ruleOverride = process.env.CLEARWRITE_HARPER_RULES || '';
+async function applyRuleOverrides() {
+  if (!ruleOverride) return;
   const config = await linter.getLintConfig();
-  const off = Object.entries(config).filter(([, value]) => value !== true).map(([name, value]) => `${name}=${value}`);
-  console.error(`harper rules: ${Object.keys(config).length} total; not enabled: ${off.join(', ')}`);
+  const names = ruleOverride === 'all' ? Object.keys(config) : ruleOverride.split(',').map((name) => name.trim()).filter(Boolean);
+  await linter.setLintConfig({ ...config, ...Object.fromEntries(names.map((name) => [name, true])) });
 }
-if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
-  console.error(`harper api: ${Object.getOwnPropertyNames(Object.getPrototypeOf(linter)).join(', ')}`);
-  for (const sample of ["don't", 'dont', "I don't think so."]) {
-    const lints = await linter.lint(sample, { language: 'plaintext' });
-    console.error(`harper word ${JSON.stringify(sample)}: ${lints.map((lint) => `${lint.lint_kind()}[${lint.suggestions().map((item) => item.get_replacement_text()).join('/')}]`).join(' | ') || 'none'}`);
-  }
-  for (const sample of ['the meeting starts at noon.', 'The report are ready.', 'Thank you for you\'re help.', 'The draft is ready.Please review it.']) {
-    const lints = await linter.lint(sample, { language: 'plaintext' });
-    console.error(`harper sample ${JSON.stringify(sample)}: ${lints.map((lint) => `${lint.lint_kind()}:${lint.get_problem_text?.() ?? ''}`).join(' | ') || 'none'}`);
-  }
-}
-if (process.env.CLEARWRITE_HARPER_RULES === 'all') {
-  const config = await linter.getLintConfig();
-  await linter.setLintConfig(Object.fromEntries(Object.keys(config).map((name) => [name, true])));
-  const after = await linter.getLintConfig();
-  console.error(`harper all-rules: ${Object.values(after).filter((value) => value === true).length}/${Object.keys(after).length} enabled`);
-  const lints = await linter.lint('the meeting starts at noon. I am fine.', { language: 'plaintext' });
-  console.error(`harper all-rules sample: ${lints.map((lint) => lint.lint_kind()).join(', ') || 'none'}`);
-}
+await applyRuleOverrides();
 parentPort.postMessage({ type: 'ready' });
 let contextSpeller;
 let contextUnavailable = false;
@@ -48,20 +32,6 @@ const englishClues = new Set('a an and are as at be been but can could did do do
 
 function codePointSlice(text, start, end) {
   return [...text].slice(start, end).join('');
-}
-
-const CONTRACTION_ENDINGS = ['t', 's', 're', 've', 'll', 'd', 'm'];
-async function apostropheVariants(word) {
-  if (!/^[A-Za-z]{3,20}$/.test(word)) return [];
-  const variants = [];
-  for (const ending of CONTRACTION_ENDINGS) {
-    if (!word.toLowerCase().endsWith(ending) || word.length - ending.length < 1) continue;
-    // n't contractions put the apostrophe before the t ("dont" -> "don't").
-    const variant = `${word.slice(0, word.length - ending.length)}'${word.slice(word.length - ending.length)}`;
-    const lints = await linter.lint(variant, { language: 'plaintext' });
-    if (!lints.some((lint) => lint.lint_kind() === 'Spelling')) variants.push(variant);
-  }
-  return variants;
 }
 
 function skipped(reason) {
@@ -101,13 +71,7 @@ async function proofread(text) {
     if (protectedRanges.some((range) => span.start < range.end && span.end > range.start)) continue;
     const suggestions = lint.suggestions();
     let candidates = suggestions.map((suggestion) => suggestion.get_replacement_text());
-    if (lint.lint_kind() === 'Spelling') {
-      // A dropped apostrophe ("dont", "theyre", "youve") is a common typo that Harper's
-      // spelling suggestions do not cover. Offer the contraction when Harper accepts it.
-      const contractions = await apostropheVariants(codePointSlice(text, span.start, span.end));
-      candidates = [...contractions, ...candidates.filter((candidate) => !contractions.includes(candidate))];
-    }
-    let selected = candidates.length === 1 ? 0 : lint.lint_kind() === 'Spelling'
+    let selected = suggestions.length === 1 ? 0 : lint.lint_kind() === 'Spelling'
       ? selectSpellingCandidate({ text, start: span.start, end: span.end, candidates }) : -1;
     const spellingEdit = lint.lint_kind() === 'Spelling' || (lint.lint_kind() === 'Typo' && /^[A-Za-z]{3,24}$/.test(codePointSlice(text, span.start, span.end)));
     if (useContext && contextSpeller && spellingEdit) {
@@ -157,6 +121,8 @@ async function configure({ dialect, words }) {
   await linter.clearWords();
   const list = Array.isArray(words) ? words.filter((word) => typeof word === 'string' && word.length <= 48) : [];
   if (list.length) await linter.importWords(list);
+  // Changing the dialect resets Harper's rule configuration.
+  await applyRuleOverrides();
 }
 
 let queue = Promise.resolve();

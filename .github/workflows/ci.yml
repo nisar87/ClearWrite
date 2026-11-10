@@ -45,8 +45,6 @@ jobs:
 
       - name: Offline accuracy benchmark
         run: node scripts/benchmark-offline.js ci
-        env:
-          CLEARWRITE_HARPER_REPORT: '1'
 
       - name: Offline benchmark with every Harper rule enabled (comparison only)
         run: node scripts/benchmark-offline.js ci-all-rules

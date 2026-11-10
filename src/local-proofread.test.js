@@ -181,10 +181,11 @@ test('each local finding carries exact edits so it can be accepted on its own', 
   assert.ok(result.includes(other.edits[0].text), 'other accepted fixes still apply');
 });
 
-test('a dropped apostrophe is offered as the contraction', { todo: 'investigating Harper apostrophe handling' }, async () => {
+test('a dropped apostrophe is offered as the contraction', async () => {
   configureLocalProofreader({ dialect: 'american', words: [] });
   const review = await proofreadLocally('I dont think we should wait.');
   const finding = review.findings.find((item) => item.original === 'dont');
   assert.ok(finding, 'the typo is flagged');
-  assert.ok(finding.suggestions.includes("don't"), `offered: ${finding.suggestions.join(', ')}`);
+  assert.equal(finding.suggestions[0], "don't", `offered: ${finding.suggestions.join(', ')}`);
+  assert.equal(review.correctedText, "I don't think we should wait.");
 });

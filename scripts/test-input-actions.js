@@ -116,21 +116,20 @@ test('diagnostic variants', async () => {
   const { tmpdir } = await import('node:os');
   const body = (extra) => `$ErrorActionPreference='Stop'; Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; ${extra} $f=[System.Windows.Automation.AutomationElement]::FocusedElement; $f.Current.ControlType.ProgrammaticName + ' ' + $f.Current.ClassName`;
   const file = `${tmpdir()}\\cw-diag.ps1`;
+  const refs = "$r=@(([System.Windows.Automation.AutomationElement].Assembly.Location),([System.Windows.Automation.AutomationIdentifier].Assembly.Location),([System.Windows.Rect].Assembly.Location),([Accessibility.IAccessible].Assembly.Location)); Add-Type -AssemblyName WindowsBase; Add-Type -AssemblyName Accessibility;";
+  const reader = fileURLToPath(new URL('../src/editor-reader.cs', import.meta.url));
+  const tiny = 'public static class Tiny { public static string Get() { var f = System.Windows.Automation.AutomationElement.FocusedElement; return f.Current.ControlType.ProgrammaticName; } }';
   const variants = {
-    commandPlain: ['-NoProfile', '-Mta', '-Command', body('')],
-    commandNonInteractive: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Mta', '-ExecutionPolicy', 'Bypass', '-Command', body('')],
-    commandSta: ['-NoProfile', '-Command', body('')],
-    commandWindowsBase: ['-NoProfile', '-Mta', '-Command', body('Add-Type -AssemblyName WindowsBase; Add-Type -AssemblyName Accessibility;')],
-    commandFromHandle: ['-NoProfile', '-Mta', '-Command', body(`$null=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]${hwnd});`)],
-    commandRootFirst: ['-NoProfile', '-Mta', '-Command', body('$null=[System.Windows.Automation.AutomationElement]::RootElement.Current.Name;')],
+    twice: body('$null=[System.Windows.Automation.AutomationElement]::FocusedElement.Current.ControlType;'),
+    compiledReaderOnly: body(`${refs} Add-Type -Path '${reader}' -ReferencedAssemblies $r;`),
+    compiledReaderRead: body(`${refs} Add-Type -Path '${reader}' -ReferencedAssemblies $r; $null=[ClearWriteEditorReader]::Read(${hwnd},0,[string[]]@(),[string[]]@(),$false);`),
+    tinyCompiled: `Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; ${refs} Add-Type -TypeDefinition '${tiny}' -ReferencedAssemblies $r; [Tiny]::Get()`,
   };
-  for (const [name, args] of Object.entries(variants)) {
-    try { console.log('DIAG', name, execFileSync('powershell.exe', args, { encoding: 'utf8' }).trim()); }
-    catch (error) { console.log('DIAG', name, 'error', String(error.stderr || error.message).slice(0, 200)); }
+  for (const [name, script] of Object.entries(variants)) {
+    writeFileSync(file, script);
+    try { console.log('DIAG', name, execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' }).trim().replace(/\s+/g, ' ')); }
+    catch (error) { console.log('DIAG', name, 'error', String(error.stderr || error.message).slice(0, 300).replace(/\s+/g, ' ')); }
   }
-  writeFileSync(file, body(''));
-  console.log('DIAG fileMta', execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' }).trim());
-  console.log('DIAG fileSta', execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' }).trim());
 });
 
 test('field replacement checks the exact text before replacing everything', async () => {

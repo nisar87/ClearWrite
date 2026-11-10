@@ -102,7 +102,7 @@ test('verified paste refuses when the focused element changed', async () => {
 test('field replacement checks the exact text before replacing everything', async () => {
   await reset(0, 0);
   const check = await copySelectionInWindow(hwnd).catch(() => ({ runtimeId: '' }));
-  assert.ok(check.runtimeId, 'the focused TextBox has a UI Automation runtime id');
+  assert.ok(check.runtimeId, 'the focused edit control has a UI Automation runtime id');
   await command(`setclip ${b64('Please send the report today.')}`);
   if (process.env.CLEARWRITE_DIAGNOSE) {
     const { execFileSync } = await import('node:child_process');

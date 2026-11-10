@@ -1,17 +1,13 @@
 # Test-owned WinForms window for Windows input integration tests (scripts/test-input-actions.js).
-# Protocol: prints one JSON line {"hwnd":...} when ready, then answers one command per stdin line:
-#   select <start> <length>   select text in the TextBox and focus the window
-#   settext <base64>          replace the TextBox text (UTF-8, base64)
+# Hosts one native EDIT control. Protocol: prints one JSON line {"hwnd":...} when ready, then answers one command per stdin line:
+#   select <start> <length>   select text in the edit control and focus the window
+#   settext <base64>          replace the edit control's text (UTF-8, base64)
 #   setclip <base64>          put text on the clipboard
-#   text                      print {"text":"<base64>"} of the TextBox
+#   text                      print {"text":"<base64>"} of the edit control
 #   clip                      print {"clip":"<base64>"} of the clipboard text
 #   exit
 # No other application is touched.
 $ErrorActionPreference = 'Stop'
-# powershell.exe runs WinForms with legacy accessibility, where a TextBox is exposed as a plain
-# Pane without ValuePattern. Opt in to the .NET Framework 4.8 UIA behaviour (Edit + Value), which
-# matches how ordinary edit controls in other apps appear, before WinForms loads.
-foreach ($level in '', '.2', '.3') { [AppContext]::SetSwitch("Switch.UseLegacyAccessibilityFeatures$level", $false) }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition @"
 using System;
@@ -19,6 +15,20 @@ using System.Runtime.InteropServices;
 public static class FixtureWin {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  // A plain Win32 EDIT control: UI Automation exposes it through the system Edit proxy
+  // (ControlType.Edit + ValuePattern), like ordinary edit fields in other apps. A WinForms
+  // TextBox is not used because powershell.exe's WinForms reports it as a Pane.
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(int exStyle, string className, string text, int style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool SetWindowText(IntPtr hWnd, string text);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int max);
+  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hWnd);
+  public static IntPtr Edit;
+  public static void CreateEdit(IntPtr parent, string text) { Edit = CreateWindowEx(0x200, "EDIT", text, 0x50010080, 10, 10, 480, 24, parent, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero); }
+  public static void SetText(string text) { SetWindowText(Edit, text); }
+  public static string GetText() { var builder = new System.Text.StringBuilder(GetWindowTextLength(Edit) + 1); GetWindowText(Edit, builder, builder.Capacity); return builder.ToString(); }
+  public static void Select(int start, int length) { SetFocus(Edit); SendMessage(Edit, 0xB1, new IntPtr(start), new IntPtr(start + length)); }
   // stdin is read on a background thread so the form keeps pumping messages (keyboard
   // input sent by the test must be processed while the test waits).
   public static readonly System.Collections.Concurrent.ConcurrentQueue<string> Lines = new System.Collections.Concurrent.ConcurrentQueue<string>();
@@ -37,15 +47,12 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'ClearWrite input test'
 $form.Width = 520; $form.Height = 160; $form.TopMost = $true
 $form.StartPosition = 'CenterScreen'
-$box = New-Object System.Windows.Forms.TextBox
-$box.Left = 10; $box.Top = 10; $box.Width = 480; $box.HideSelection = $false
-$box.Text = 'Please send teh report today.'
-$form.Controls.Add($box)
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 function Encode([string]$value) { [Convert]::ToBase64String($utf8.GetBytes([string]$value)) }
 function Decode([string]$value) { $utf8.GetString([Convert]::FromBase64String($value)) }
 $form.Add_Shown({
-  $form.Activate(); $box.Focus() | Out-Null
+  [FixtureWin]::CreateEdit($form.Handle, 'Please send teh report today.')
+  $form.Activate(); [FixtureWin]::Select(0, 0)
   [Console]::Out.WriteLine((@{ hwnd = $form.Handle.ToInt64() } | ConvertTo-Json -Compress))
   [Console]::Out.Flush()
   $script:timer = New-Object System.Windows.Forms.Timer
@@ -61,12 +68,12 @@ $form.Add_Shown({
       switch ($parts[0]) {
         'select' {
           [FixtureWin]::SetForegroundWindow($form.Handle) | Out-Null
-          $form.Activate(); $box.Focus() | Out-Null
-          $box.Select([int]$parts[1], [int]$parts[2])
+          $form.Activate()
+          [FixtureWin]::Select([int]$parts[1], [int]$parts[2])
         }
-        'settext' { $box.Text = Decode $parts[1] }
+        'settext' { [FixtureWin]::SetText((Decode $parts[1])) }
         'setclip' { [System.Windows.Forms.Clipboard]::SetText((Decode $parts[1])) }
-        'text' { $reply = (@{ text = (Encode $box.Text) } | ConvertTo-Json -Compress) }
+        'text' { $reply = (@{ text = (Encode ([FixtureWin]::GetText())) } | ConvertTo-Json -Compress) }
         'clip' { $reply = (@{ clip = (Encode ([System.Windows.Forms.Clipboard]::GetText())) } | ConvertTo-Json -Compress) }
         'foreground' { $reply = (@{ foreground = ([FixtureWin]::GetForegroundWindow() -eq $form.Handle) } | ConvertTo-Json -Compress) }
         default { $reply = 'unknown' }

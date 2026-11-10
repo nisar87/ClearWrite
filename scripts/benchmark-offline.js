@@ -64,7 +64,7 @@ const summarize = (split) => {
       grammarWrongChanges: group.filter((row) => row.wrongChange).length,
     } : {}) };
 };
-const report = { label: process.argv[2] || 'current', coldStartMs: rows[0].ms, peakRssMiB: Math.round(process.resourceUsage().maxRSS / 1024), steadyRssMiB, performanceSamples, summary: { dev: summarize('dev'), test: summarize('test'), grammar: summarize('grammar'), prose: summarize('prose') }, rows };
+const report = { label: process.argv[2] || 'current', coldStartMs: rows[0].ms, peakRssMiB: Math.round(process.resourceUsage().maxRSS / 1024), steadyRssMiB, performanceSamples, summary: { dev: summarize('dev'), test: summarize('test'), grammar: summarize('grammar'), holdout: summarize('holdout'), prose: summarize('prose') }, rows };
 await mkdir(new URL('../benchmark/results/', import.meta.url), { recursive: true });
 await writeFile(new URL(`../benchmark/results/${report.label.replace(/[^a-z0-9-]/gi, '-')}.json`, import.meta.url), JSON.stringify(report, null, 2) + '\n');
 for (const row of rows.filter((item) => item.expected && !item.exact)) console.log(`grammar miss ${row.id}: ${JSON.stringify(row.output)} ${JSON.stringify(row.findings)}`);

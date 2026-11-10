@@ -46,6 +46,9 @@ jobs:
       - name: Offline accuracy benchmark
         run: node scripts/benchmark-offline.js ci
 
+      - name: Benchmark gates
+        run: node scripts/benchmark-gate.js ci
+
       - name: Upload benchmark report
         if: always()
         uses: actions/upload-artifact@v4
@@ -73,6 +76,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      # electron-builder packages node_modules/electron/dist; make sure the binary is present.
+      - name: Download the Electron binary
+        shell: pwsh
+        run: |
+          if (-not (Test-Path node_modules/electron/dist/electron.exe)) { node node_modules/electron/install.js }
+          if (-not (Test-Path node_modules/electron/dist/electron.exe)) { throw 'Electron binary missing.' }
 
       - name: Build installer and ZIP
         run: npm run dist:win

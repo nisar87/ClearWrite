@@ -1,6 +1,7 @@
 import { parentPort } from 'node:worker_threads';
 import { selectSpellingCandidate } from './spelling-selection.js';
 import { loadContextSpeller, protectedSpans } from './context-spelling.js';
+import { composeText, diffSpan } from './finding-edits.js';
 
 const [{ LocalLinter, Dialect }, { binaryInlined }] = await Promise.all([
   import('harper.js'),
@@ -52,7 +53,6 @@ async function proofread(text) {
     catch { contextUnavailable = true; }
   }
   const findings = [];
-  let correctedText = text;
   for (const lint of [...lints].sort((a, b) => b.span().start - a.span().start)) {
     // Harper's JS spans use UTF-16 offsets. The ranker and replacements use
     // code points, so convert once before processing emoji-containing drafts.
@@ -75,28 +75,33 @@ async function proofread(text) {
         if (validation.some((finding) => finding.lint_kind() === 'Spelling')) selected = -1;
       }
     }
-    const options = selected >= 0
-      ? [candidates[selected], ...candidates.filter((_, index) => index !== selected)].slice(0, 3)
-      : candidates.slice(0, 3);
+    const order = selected >= 0
+      ? [selected, ...candidates.map((_, index) => index).filter((index) => index !== selected)].slice(0, 3)
+      : candidates.map((_, index) => index).slice(0, 3);
+    // Each option is an exact edit of the checked text, so the writer can accept any one
+    // finding on its own. Spelling options replace the word; other lints are applied by
+    // Harper (which knows whether a suggestion replaces, removes or inserts) and reduced
+    // to the smallest changed range.
+    const edits = [];
+    for (const index of order) {
+      if (spellingEdit) edits.push({ start: span.start, end: span.end, text: candidates[index] });
+      else edits.push(diffSpan(text, await linter.applySuggestion(text, lint, suggestions[index])));
+    }
     findings.push({
       message: lint.message(),
       original: codePointSlice(text, span.start, span.end),
-      suggestions: options,
+      suggestions: order.map((index) => candidates[index]),
+      edits,
+      choice: selected >= 0 ? 0 : -1,
       appliedLocally: selected >= 0,
       kind: lint.lint_kind(),
       start: span.start,
       end: span.end,
     });
-    if (selected >= 0) {
-      if (spellingEdit) {
-        const points = [...correctedText];
-        correctedText = points.slice(0, span.start).join('') + candidates[selected] + points.slice(span.end).join('');
-      } else correctedText = await linter.applySuggestion(correctedText, lint, suggestions[selected]);
-    }
   }
 
   findings.reverse();
-  return { supported: true, correctedText, findings, reason: contextUnavailable ? 'Context data unavailable; basic offline checking was used.' : '' };
+  return { supported: true, correctedText: composeText(text, findings), findings, reason: contextUnavailable ? 'Context data unavailable; basic offline checking was used.' : '' };
 }
 
 async function configure({ dialect, words }) {

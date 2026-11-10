@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('clearWrite', {
   addDictionaryWord: (word) => ipcRenderer.invoke('dictionary:add', word),
   removeDictionaryWord: (word) => ipcRenderer.invoke('dictionary:remove', word),
   addWordFromPanel: (word) => ipcRenderer.invoke('assistant:add-word', word),
+  chooseFinding: (index, option) => ipcRenderer.invoke('assistant:choose-finding', index, option),
   pauseMonitor: (period) => ipcRenderer.invoke('app:pause-monitor', period),
   saveGeminiKey: (key) => ipcRenderer.invoke('gemini:save-key', key),
   removeGeminiKey: () => ipcRenderer.invoke('gemini:remove-key'),

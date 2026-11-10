@@ -159,3 +159,24 @@ test('context correction after emoji keeps offsets and surrounding text intact',
   assert.ok(finding);
   assert.equal([...text].slice(finding.start, finding.end).join(''), 'mesage');
 });
+
+test('each local finding carries exact edits so it can be accepted on its own', async () => {
+  configureLocalProofreader({ dialect: 'american', words: [] });
+  const { composeText, chooseOption } = await import('./finding-edits.js');
+  const text = 'This is a example. Please send the mesage tomorow.';
+  const review = await proofreadLocally(text);
+  assert.equal(review.correctedText, composeText(text, review.findings), 'the proposed text is built from the chosen edits');
+  for (const finding of review.findings) {
+    assert.ok(Array.isArray(finding.edits) && finding.edits.length === finding.suggestions.length);
+    assert.equal(finding.choice, finding.appliedLocally ? 0 : -1);
+    for (const edit of finding.edits) assert.ok(edit.start >= 0 && edit.end <= [...text].length && edit.start <= edit.end);
+  }
+  const article = review.findings.findIndex((finding) => finding.original === 'a');
+  assert.ok(article >= 0);
+  const onlyArticleIgnored = chooseOption(review.findings, article, 'ignore');
+  const result = composeText(text, onlyArticleIgnored);
+  assert.ok(result.startsWith('This is a example.'), 'ignoring one finding keeps that text');
+  const other = onlyArticleIgnored.find((finding, index) => index !== article && finding.choice >= 0);
+  assert.ok(other, 'at least one other fix is proposed');
+  assert.ok(result.includes(other.edits[0].text), 'other accepted fixes still apply');
+});

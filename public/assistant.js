@@ -149,20 +149,53 @@ function render(state) {
     $('edit-button').setAttribute('aria-pressed', String(editing));
     const notes = [];
     if (suggestion.note) notes.push(suggestion.note);
-    if (suggestion.needsChoice) notes.push(`${suggestion.needsChoice} possible issue${suggestion.needsChoice === 1 ? '' : 's'} need${suggestion.needsChoice === 1 ? 's' : ''} your judgement and ${suggestion.needsChoice === 1 ? 'was' : 'were'} not changed.`);
+    if (suggestion.needsChoice) notes.push(`${suggestion.needsChoice} possible issue${suggestion.needsChoice === 1 ? '' : 's'} need${suggestion.needsChoice === 1 ? 's' : ''} your judgement and ${suggestion.needsChoice === 1 ? 'was' : 'were'} not changed. Pick an option below or ignore it.`);
     if (changed && !manual && state.replaceSupported === false) notes.push('This app exposes a whole document, so use Copy and paste the part you need.');
     if (changed && !manual && state.canApply && suggestion.action && suggestion.action !== 'correct') notes.push('Apply replaces all of the text in this field.');
     if (changed && !manual && suggestion.source === 'ai') notes.push('AI suggestions can be wrong. Review the highlighted changes before applying.');
     if (suggestion.source === 'local') notes.push('On-device English check: it catches common spelling and grammar mistakes, not all of them.');
     $('suggestion-note').textContent = notes.join(' ');
     show('suggestion-note', notes.length > 0);
-    const findings = (suggestion.findings || []).filter((finding) => finding.original);
-    $('findings').replaceChildren(...findings.slice(0, 6).map((finding) => {
+    // Each finding can be accepted (pick an option), ignored, or reset on its own. Findings
+    // without exact edits (older or AI results) are listed for information only.
+    const findings = (suggestion.findings || []).map((finding, index) => ({ finding, index })).filter(({ finding }) => finding.original);
+    const visible = findings.slice(0, 12);
+    $('findings').replaceChildren(...visible.map(({ finding, index }) => {
       const item = document.createElement('li');
+      const choosable = Array.isArray(finding.edits);
+      const chosen = choosable && !finding.ignored && finding.choice >= 0;
+      item.classList.toggle('resolved', chosen);
+      item.classList.toggle('ignored', Boolean(finding.ignored));
       const word = document.createElement('b');
       word.textContent = finding.original;
-      item.append(word, ` ${finding.suggestions?.length ? `→ ${finding.suggestions.join(' / ')}` : ''}`);
+      item.append(word);
+      if (!choosable) item.append(` ${finding.suggestions?.length ? `→ ${finding.suggestions.join(' / ')}` : ''}`);
       if (finding.message) { const small = document.createElement('small'); small.textContent = finding.message; item.append(small); }
+      const controls = document.createElement('span');
+      controls.className = 'finding-controls';
+      if (choosable && !finding.ignored) {
+        finding.edits.forEach((edit, option) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'finding-option';
+          const label = edit.text || finding.suggestions?.[option] || '';
+          button.textContent = label.trim() ? label : '(remove)';
+          const selectedOption = finding.choice === option;
+          button.setAttribute('aria-pressed', String(selectedOption));
+          button.title = selectedOption ? 'Chosen. Click to keep your original text here.' : `Use “${button.textContent}”`;
+          button.addEventListener('click', () => run(() => api.chooseFinding(index, selectedOption ? -1 : option), button));
+          controls.append(button);
+        });
+      }
+      if (choosable) {
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'link-button';
+        toggle.textContent = finding.ignored ? 'Show again' : 'Ignore';
+        toggle.title = finding.ignored ? 'Review this finding again' : 'Keep your original text and hide this finding';
+        toggle.addEventListener('click', () => run(() => api.chooseFinding(index, finding.ignored ? -1 : 'ignore'), toggle));
+        controls.append(toggle);
+      }
       // Only spelling flags can be fixed by teaching the checker a word, and only on request.
       if (finding.kind === 'Spelling' && !inDictionary(state, finding.original)) {
         const add = document.createElement('button');
@@ -171,10 +204,17 @@ function render(state) {
         add.textContent = 'Add to dictionary';
         add.title = `Stop flagging “${finding.original}” (stored only on this device)`;
         add.addEventListener('click', () => run(() => api.addWordFromPanel(finding.original), add));
-        item.append(add);
+        controls.append(add);
       }
+      if (controls.childElementCount) item.append(controls);
       return item;
     }));
+    if (findings.length > visible.length) {
+      const more = document.createElement('li');
+      more.className = 'findings-more';
+      more.textContent = `${findings.length - visible.length} more not shown. Use Edit to review the rest.`;
+      $('findings').append(more);
+    }
     show('findings', findings.length > 0);
   } else {
     $('source-text').textContent = state.text || '';

@@ -234,7 +234,8 @@ export function monitorView(session, { connected = false, provider = 'chatgpt', 
       if (!suggestion) return view;
       const unchanged = suggestion.text === text;
       const skipped = suggestion.source === 'local' && suggestion.supported === false;
-      const unresolved = suggestion.needsChoice > 0 || suggestion.findings?.some((finding) => !finding.appliedLocally);
+      // Findings with edits track the writer's choices; a chosen or ignored finding is resolved.
+      const unresolved = suggestion.needsChoice > 0 || suggestion.findings?.some((finding) => (Array.isArray(finding.edits) ? !finding.ignored && !(finding.choice >= 0) : !finding.appliedLocally));
       return {
         ...view,
         suggestion,

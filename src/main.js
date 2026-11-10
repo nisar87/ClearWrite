@@ -18,6 +18,7 @@ import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSelection, pasteToWindow, replaceFieldInWindow } from './windows-input.js';
+import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || (app.isPackaged
@@ -784,7 +785,8 @@ async function proofreadMonitorText(text) {
   try {
     const protectedDraft = protectUrls(text);
     const review = await proofreadLocally(protectedDraft.input);
-    return { ...review, correctedText: review.supported ? restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) : '' };
+    const findings = mapFindingsFromProtected(review.findings, protectedDraft);
+    return { ...review, findings, correctedText: review.supported ? restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) : '' };
   } catch (error) {
     return { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.', error: true };
   }
@@ -792,17 +794,47 @@ async function proofreadMonitorText(text) {
 
 function localSuggestion(text, review, note = '') {
   if (review.error) return null;
-  const corrected = review.supported ? matchLineEndings(text, preserveOuterWhitespace(text, review.correctedText || text)) : text;
-  const findings = Array.isArray(review.findings) ? review.findings.map(({ message, original, suggestions, appliedLocally, kind }) => ({ message, original, suggestions, appliedLocally, kind: kind || '' })) : [];
+  const findings = Array.isArray(review.findings)
+    ? review.findings.map(({ message, original, suggestions, appliedLocally, kind, start, end, edits, choice }) => ({
+      message, original, suggestions, appliedLocally, kind: kind || '', start, end,
+      ...(Array.isArray(edits) ? { edits, choice: Number.isSafeInteger(choice) ? choice : -1, ignored: false } : {}),
+    }))
+    : [];
+  // Findings with exact edits are rebuilt from the original text, so each one can be
+  // accepted or ignored on its own. Older results without edits keep the whole-text form.
+  const corrected = !review.supported ? text
+    : hasEdits(findings) ? composeText(text, findings)
+      : matchLineEndings(text, preserveOuterWhitespace(text, review.correctedText || text));
   return {
     source: 'local',
     supported: review.supported,
     sourceLabel: 'On-device check',
     text: corrected,
     findings,
-    needsChoice: findings.filter((finding) => !finding.appliedLocally).length,
+    needsChoice: hasEdits(findings) ? unresolvedCount(findings) : findings.filter((finding) => !finding.appliedLocally).length,
     note: note || (!review.supported ? review.reason : ''),
   };
+}
+
+// The writer accepted an option, cleared a choice, or ignored one finding. Only that
+// finding changes; the suggested text is rebuilt from the original plus chosen options.
+function chooseFinding(index, option) {
+  if (panel.mode === 'manual' && manual) {
+    const selection = manual;
+    if (selection.status !== 'done' || !hasEdits(selection.findings)) throw new Error('There is no suggestion to adjust.');
+    const findings = chooseOption(selection.findings, index, option);
+    Object.assign(selection, { findings, result: composeText(selection.text, findings), needsChoice: unresolvedCount(findings) });
+    publishAssistantView();
+    return;
+  }
+  const phase = monitorSession.phase === 'away' ? monitorSession.phaseBeforeAway : monitorSession.phase;
+  const suggestion = monitorSession.suggestion;
+  if (phase !== 'suggestion' || !suggestion || !hasEdits(suggestion.findings)) throw new Error('There is no suggestion to adjust.');
+  const findings = chooseOption(suggestion.findings, index, option);
+  const next = { ...suggestion, findings, text: composeText(monitorSession.text, findings), needsChoice: unresolvedCount(findings) };
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision: monitorSession.revision, suggestion: next });
+  monitorEditedResult = undefined;
+  publishAssistantView();
 }
 
 function withTimeout(signal, ms) {
@@ -1536,6 +1568,7 @@ handle('assistant:retry', retryMonitorReview);
 handle('assistant:set-pinned', setPanelPinned);
 handle('assistant:ready', () => lastAssistantView || null);
 handle('assistant:add-word', addDictionaryWord);
+handle('assistant:choose-finding', chooseFinding);
 handle('live:proofread', proofreadLiveDraft);
 handle('live:cancel', cancelLiveProofread);
 handle('live:read-clipboard', () => clipboard.readText().slice(0, 6000));

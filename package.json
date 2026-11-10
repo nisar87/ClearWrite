@@ -28,6 +28,7 @@
     "test": "node --test src/windows-input.test.js src/gemini.test.js src/live-proofread.test.js src/monitor-session.test.js src/panel-position.test.js src/panel-lifecycle.test.js src/shortcut.test.js src/proofreading-mode.test.js src/personal-dictionary.test.js src/monitoring.test.js src/local-proofread.test.js src/context-spelling.test.js src/editor-reader.test.js src/finding-edits.test.js src/ai-changes.test.js src/paragraph-review.test.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "3.8.1",
     "electron-updater": "6.8.11",
     "harper.js": "^3.0.0",
     "mnemonist": "0.40.7"

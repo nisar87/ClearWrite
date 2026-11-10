@@ -195,8 +195,38 @@ function renderProofreading(state, { isGemini, connected }) {
     item.append(label, remove);
     return item;
   }));
+  renderLearning(state);
   $('dictionary-location').textContent = `${(state.dictionaryWords || []).length.toLocaleString()} word${(state.dictionaryWords || []).length === 1 ? '' : 's'}. Stored only on this device${state.dictionaryLocation ? ` (${state.dictionaryLocation})` : ''}; never uploaded or written to logs.`;
 }
+
+function renderLearning(state) {
+  const patterns = (state.learnedPatterns || []).filter((pattern) => pattern.trusted || pattern.suppressed || pattern.accepts + pattern.rejects > 0);
+  const list = $('learning-list');
+  list.replaceChildren(...patterns.slice(0, 200).map((pattern) => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    const status = pattern.trusted ? 'suggested automatically' : pattern.suppressed ? 'ignored automatically' : 'learning';
+    label.textContent = `${pattern.from} → ${pattern.to} (${status}; accepted ${pattern.accepts}, ignored ${pattern.rejects})`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = `Forget “${pattern.from} → ${pattern.to}”`;
+    remove.setAttribute('aria-label', `Forget ${pattern.from} to ${pattern.to}`);
+    remove.addEventListener('click', async () => {
+      try { await requireApi('forgetLearned')(pattern.from, pattern.to); showNotice('Forgotten.', true); }
+      catch (error) { showNotice(error.message, true); }
+    });
+    item.append(label, remove);
+    return item;
+  }));
+  $('learning-clear').disabled = !patterns.length;
+  $('learning-location').textContent = `${patterns.length.toLocaleString()} learned change${patterns.length === 1 ? '' : 's'}. Stored only on this device; never uploaded or written to logs.`;
+}
+
+$('learning-clear').addEventListener('click', async () => {
+  try { await requireApi('forgetAllLearned')(); showNotice('ClearWrite forgot everything it learned from you.', true); }
+  catch (error) { showNotice(error.message, true); }
+});
 
 document.querySelectorAll('input[name="proofreading-mode"]').forEach((input) => input.addEventListener('change', async () => {
   if (!input.checked) return;

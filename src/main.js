@@ -12,6 +12,7 @@ import { createShortcutRegistrar } from './shortcut.js';
 import { configureLocalProofreader, proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { actionRequiresAi, createProofreadingRouter, ENGLISH_DIALECTS, migrateProofreadingPreferences, normalizeEnglishDialect, normalizeProofreadingMode, OfflineModeError } from './proofreading-mode.js';
 import { createPersonalDictionary } from './personal-dictionary.js';
+import { applyLearning, createLearningMemory } from './learning-memory.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -108,6 +109,7 @@ let state = {
   englishDialect: 'american',
   englishDialects: ENGLISH_DIALECTS,
   dictionaryWords: [],
+  learnedPatterns: [],
   dictionaryLocation: '',
   providerChecked: false,
   modeNotice: '',
@@ -126,6 +128,8 @@ const router = createProofreadingRouter({
 // the repository. It is only passed to the on-device checker and never logged.
 const dictionaryDir = process.env.CLEARWRITE_DICTIONARY_DIR || path.join(app.getPath('appData'), 'ClearWrite');
 const personalDictionary = createPersonalDictionary(dictionaryDir);
+// Personal learning: stored next to the dictionary, on this device only (learning-memory.js).
+const learningMemory = createLearningMemory(dictionaryDir);
 
 // ChatGPT sign-in comes from the optional Sign in with ChatGPT DevKit (@siwc/local). It is
 // loaded lazily so ClearWrite installs and runs without it: Offline only and Gemini work, and
@@ -801,6 +805,25 @@ function aiCorrection(text, output) {
   };
 }
 
+// Applies what this writer has taught ClearWrite to a suggestion made of individual findings:
+// changes they always make are added, suggestions they always ignore are shown as ignored.
+function withLearning(text, suggestion) {
+  if (!suggestion || suggestion.supported === false || !Array.isArray(suggestion.findings)) return suggestion;
+  if (suggestion.findings.length && !hasEdits(suggestion.findings)) return suggestion;
+  if (suggestion.action && suggestion.action !== 'correct') return suggestion;
+  const result = applyLearning(text, suggestion.findings, learningMemory.patterns());
+  if (!result.learned && !result.suppressed) return suggestion;
+  return { ...suggestion, findings: result.findings, text: composeText(text, result.findings), needsChoice: unresolvedCount(result.findings) };
+}
+
+// The writer committed a suggestion (Apply, Replace or Copy): remember their decisions.
+function learnFrom(text, findings, edited = false) {
+  if (edited || !hasEdits(findings)) return;
+  void learningMemory.record(text, findings).then((changed) => {
+    if (changed) { state.learnedPatterns = learningMemory.list(); publishState(); }
+  }).catch(() => { /* Learning is optional; a write failure never blocks the user. */ });
+}
+
 function localSuggestion(text, review, note = '') {
   if (review.error) return null;
   const findings = Array.isArray(review.findings)
@@ -832,7 +855,7 @@ function chooseFinding(index, option) {
     const selection = manual;
     if (selection.status !== 'done' || !hasEdits(selection.findings)) throw new Error('There is no suggestion to adjust.');
     const findings = chooseOption(selection.findings, index, option);
-    Object.assign(selection, { findings, result: composeText(selection.text, findings), needsChoice: unresolvedCount(findings) });
+    Object.assign(selection, { findings, result: composeText(selection.text, findings), needsChoice: unresolvedCount(findings), edited: false });
     publishAssistantView();
     return;
   }
@@ -871,7 +894,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
   const providerKey = useAi ? `${state.provider}:${state.selectedModel}` : 'local';
   const cached = force ? undefined : reviewCache.get(key, text);
   if (cached?.providerKey === providerKey) {
-    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: cached.suggestion });
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: withLearning(text, cached.suggestion) });
     publishAssistantView();
     dispatchPanel({ type: 'result' });
     return;
@@ -923,7 +946,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
     startup(`monitor review failed (latencyMs=${latency})`);
   } else {
     if (cacheable) reviewCache.set(key, text, { providerKey, suggestion });
-    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion });
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: withLearning(text, suggestion) });
     startup(`monitor review completed (mode=${state.proofreadingMode}, source=${suggestion.source}, latencyMs=${latency}, changed=${suggestion.text !== text})`);
   }
   publishAssistantView();
@@ -977,8 +1000,12 @@ async function applyMonitorSuggestion() {
   const suggestion = currentMonitorSuggestion();
   if (!suggestion) throw new Error('There is no completed suggestion to apply.');
   if (suggestion.text === monitorSession.text) throw new Error('The suggestion matches your text; nothing to apply.');
-  if (!monitorSession.snapshot?.replaceSupported && supportsSpanApply(monitorSession.snapshot)) { await applyFixesInDocument(); return; }
-  await writeToMonitoredField('apply', suggestion.text, monitorSession.text);
+  const text = monitorSession.text;
+  const findings = monitorSession.suggestion?.findings;
+  const edited = monitorEditedResult?.revision === monitorSession.revision;
+  if (!monitorSession.snapshot?.replaceSupported && supportsSpanApply(monitorSession.snapshot)) await applyFixesInDocument();
+  else await writeToMonitoredField('apply', suggestion.text, text);
+  learnFrom(text, findings, edited);
 }
 
 // Rich editors: apply only the chosen fixes, each located by its surrounding text and verified
@@ -1427,7 +1454,7 @@ async function transform(action) {
         if (manual === selection) Object.assign(selection, local);
         return;
       }
-      const correction = aiCorrection(selection.text, output);
+      const correction = withLearning(selection.text, { source: 'ai', ...aiCorrection(selection.text, output) });
       Object.assign(selection, { status: 'done', result: correction.text, source: 'ai', findings: correction.findings, needsChoice: correction.needsChoice, note: correction.note });
     } else {
       Object.assign(selection, { status: 'done', result: output, source: 'ai', findings: [], needsChoice: 0, note: action === 'reply' || action === 'continue' ? '' : rewriteWarning(selection.text, output) });
@@ -1450,7 +1477,7 @@ async function transform(action) {
 
 function manualLocalResult(text, review, note = '') {
   if (review.error) return { status: 'error', message: review.reason || 'The on-device check is unavailable.' };
-  const suggestion = localSuggestion(text, review, note);
+  const suggestion = withLearning(text, localSuggestion(text, review, note));
   return { status: 'done', result: suggestion.text, source: 'local', supported: suggestion.supported, findings: suggestion.findings, note: suggestion.note, needsChoice: suggestion.needsChoice };
 }
 
@@ -1483,6 +1510,7 @@ async function copyResult() {
   if (panel.mode === 'manual' && manual) {
     if (manual.status !== 'done' || !manual.result) throw new Error('There is no completed suggestion to copy.');
     clipboard.writeText(manual.result);
+    learnFrom(manual.text, manual.findings, manual.edited);
     state.notice = 'Suggestion copied. Paste it where you need it.';
     closeManual();
     publishState();
@@ -1491,6 +1519,7 @@ async function copyResult() {
   const suggestion = currentMonitorSuggestion();
   if (!suggestion) throw new Error('There is no completed suggestion to copy.');
   clipboard.writeText(suggestion.text);
+  learnFrom(monitorSession.text, monitorSession.suggestion?.findings, monitorEditedResult?.revision === monitorSession.revision);
   publishAssistantView({ flash: 'Copied to clipboard' });
 }
 
@@ -1500,6 +1529,7 @@ async function replaceSelection() {
     if (selection.status !== 'done' || !selection.result) throw new Error('There is no completed suggestion to replace with.');
     if (selection.action === 'reply') throw new Error('Copy the reply and paste it where you want it.');
     await replaceVerifiedSelection(selection);
+    learnFrom(selection.text, selection.findings, selection.edited);
     state.notice = 'The selected text was replaced.';
     if (manual === selection) closeManual();
     publishState();
@@ -1516,7 +1546,7 @@ function replaceVerifiedSelection(selection) {
 
 function updateResult(value) {
   if (typeof value !== 'string' || value.length > 60_000) throw new Error('Suggestion text is too long.');
-  if (panel.mode === 'manual' && manual?.status === 'done') { manual.result = value; return; }
+  if (panel.mode === 'manual' && manual?.status === 'done') { manual.result = value; manual.edited = true; return; }
   if (currentMonitorSuggestion()) monitorEditedResult = { revision: monitorSession.revision, text: value };
 }
 
@@ -1575,6 +1605,8 @@ handle('app:set-monitor', setMonitorEnabled);
 handle('app:set-proofreading-mode', setProofreadingMode);
 handle('app:set-dialect', setEnglishDialect);
 handle('dictionary:list', () => personalDictionary.list());
+handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
+handle('learning:clear', async () => { await learningMemory.clear(); state.learnedPatterns = []; publishState(); });
 handle('dictionary:add', addDictionaryWord);
 handle('dictionary:remove', removeDictionaryWord);
 handle('app:pause-monitor', pauseMonitoring);
@@ -1790,6 +1822,8 @@ else {
     try { state.dictionaryWords = await personalDictionary.load(); }
     catch (error) { state.notice = error.message; }
     state.dictionaryLocation = personalDictionary.file;
+    try { state.learnedPatterns = await learningMemory.load(); }
+    catch (error) { state.notice = error.message; state.learnedPatterns = []; }
     applyLocalCheckerConfig();
     void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
     // Compile the keyboard/clipboard helper once now, so the first shortcut or Apply is fast.

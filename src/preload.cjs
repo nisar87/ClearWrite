@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('clearWrite', {
   listDictionary: () => ipcRenderer.invoke('dictionary:list'),
   addDictionaryWord: (word) => ipcRenderer.invoke('dictionary:add', word),
   removeDictionaryWord: (word) => ipcRenderer.invoke('dictionary:remove', word),
+  forgetLearned: (from, to) => ipcRenderer.invoke('learning:remove', from, to),
+  forgetAllLearned: () => ipcRenderer.invoke('learning:clear'),
   addWordFromPanel: (word) => ipcRenderer.invoke('assistant:add-word', word),
   chooseFinding: (index, option) => ipcRenderer.invoke('assistant:choose-finding', index, option),
   pauseMonitor: (period) => ipcRenderer.invoke('app:pause-monitor', period),

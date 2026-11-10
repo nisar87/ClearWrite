@@ -22,6 +22,10 @@ if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
 }
 if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
   console.error(`harper api: ${Object.getOwnPropertyNames(Object.getPrototypeOf(linter)).join(', ')}`);
+  for (const sample of ["don't", 'dont', "I don't think so."]) {
+    const lints = await linter.lint(sample, { language: 'plaintext' });
+    console.error(`harper word ${JSON.stringify(sample)}: ${lints.map((lint) => `${lint.lint_kind()}[${lint.suggestions().map((item) => item.get_replacement_text()).join('/')}]`).join(' | ') || 'none'}`);
+  }
   for (const sample of ['the meeting starts at noon.', 'The report are ready.', 'Thank you for you\'re help.', 'The draft is ready.Please review it.']) {
     const lints = await linter.lint(sample, { language: 'plaintext' });
     console.error(`harper sample ${JSON.stringify(sample)}: ${lints.map((lint) => `${lint.lint_kind()}:${lint.get_problem_text?.() ?? ''}`).join(' | ') || 'none'}`);

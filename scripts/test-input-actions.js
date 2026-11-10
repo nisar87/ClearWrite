@@ -106,7 +106,7 @@ test('field replacement checks the exact text before replacing everything', asyn
   await command(`setclip ${b64('Please send the report today.')}`);
   if (process.env.CLEARWRITE_DIAGNOSE) {
     const { execFileSync } = await import('node:child_process');
-    console.log(execFileSync('powershell.exe', ['-NoProfile', '-Command', `Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; $f=[System.Windows.Automation.AutomationElement]::FocusedElement; 'type=' + $f.Current.ControlType.ProgrammaticName + ' class=' + $f.Current.ClassName + ' fw=' + $f.Current.FrameworkId; $f.GetSupportedPatterns() | % { $_.ProgrammaticName }; $v=$null; 'value=' + $f.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$v); if ($v) { 'ro=' + $v.Current.IsReadOnly + ' val=' + $v.Current.Value }`], { encoding: 'utf8' }));
+    console.log(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-Command', `Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; $f=[System.Windows.Automation.AutomationElement]::FocusedElement; 'type=' + $f.Current.ControlType.ProgrammaticName + ' class=' + $f.Current.ClassName + ' fw=' + $f.Current.FrameworkId; $f.GetSupportedPatterns() | % { $_.ProgrammaticName }; $v=$null; 'value=' + $f.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$v); if ($v) { 'ro=' + $v.Current.IsReadOnly + ' val=' + $v.Current.Value }`], { encoding: 'utf8' }));
   }
   await assert.rejects(replaceFieldInWindow(hwnd, 'Different text', check.runtimeId), /text changed/);
   assert.equal(await fieldText(), ORIGINAL);

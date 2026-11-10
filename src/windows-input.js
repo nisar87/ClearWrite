@@ -150,7 +150,7 @@ switch ($env:CLEARWRITE_ACTION) {
 
 async function run(action, target, expectedText, runtimeId) {
   const { stdout } = await execFileAsync(powershell, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', helper,
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Mta', '-ExecutionPolicy', 'Bypass', '-Command', helper,
   ], {
     windowsHide: true,
     timeout: 8000,

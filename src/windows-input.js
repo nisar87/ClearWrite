@@ -10,6 +10,11 @@ const helper = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+# The Win32 proxies (Edit, RichEdit, ...) used by managed UI Automation need these assemblies;
+# without them a plain edit control in another app is reported as a Pane without ValuePattern.
+# The focus reader loads the same set.
+Add-Type -AssemblyName WindowsBase
+Add-Type -AssemblyName Accessibility
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -83,9 +88,7 @@ public static class ClearWriteInput {
   static INPUT Key(ushort key, uint flags) { var input = new INPUT(); input.type = 1; input.U.ki.wVk = key; input.U.ki.dwFlags = flags; return input; }
 }
 "@
-# Managed UI Automation installs its Win32 proxies (Edit, RichEdit, ...) lazily. Starting from
-# the target window first makes FocusedElement report a native edit as ControlType.Edit with
-# ValuePattern; otherwise it can come back as a bare Pane and Apply is refused.
+# Resolve the target window before asking for the focused element, as the focus reader does.
 function Get-FocusedElement([IntPtr]$window) {
   try { $null = [System.Windows.Automation.AutomationElement]::FromHandle($window) } catch { }
   [System.Windows.Automation.AutomationElement]::FocusedElement

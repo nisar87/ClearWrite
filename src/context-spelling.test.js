@@ -41,7 +41,7 @@ test('protected spans use code-point offsets and include embedded identifiers', 
 
 test('contraction candidates from Harper are kept and a missing apostrophe is a cheap edit', () => {
   const model = createContextSpeller({
-    unigrams: [['i', 10000], ['not', 9000], ['dot', 500], ['don', 300], ['think', 5000], ['so', 8000]],
+    unigrams: [['i', 10000], ["don't", 9000], ['not', 9000], ['dot', 500], ['don', 300], ['think', 5000], ['so', 8000]],
     bigrams: [['i', 'not', 10], ['not', 'think', 5]],
   });
   const text = 'I dont think so.';

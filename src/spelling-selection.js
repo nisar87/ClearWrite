@@ -29,7 +29,7 @@ export function selectSpellingCandidate({ text, start, end, candidates }) {
   // Multiword replacements, identifiers and names need human judgement.
   if (!/^[a-z]{3,32}$/.test(original) || candidates.length < 2) return -1;
   const ranked = candidates.map((word, index) => {
-    if (!/^[a-z]{3,36}$/.test(word)) return { index, edits: Infinity, score: Infinity };
+    if (!/^[a-z]{3,36}$/.test(word) && !/^[a-z]{1,30}['’][a-z]{1,3}$/.test(word)) return { index, edits: Infinity, score: Infinity };
     const edits = spellingDistance(original, word);
     return { index, edits, score: edits };
   }).sort((a, b) => a.score - b.score);

@@ -8,6 +8,10 @@
 #   exit
 # No other application is touched.
 $ErrorActionPreference = 'Stop'
+# powershell.exe runs WinForms with legacy accessibility, where a TextBox is exposed as a plain
+# Pane without ValuePattern. Opt in to the .NET Framework 4.8 UIA behaviour (Edit + Value), which
+# matches how ordinary edit controls in other apps appear, before WinForms loads.
+foreach ($level in '', '.2', '.3') { [AppContext]::SetSwitch("Switch.UseLegacyAccessibilityFeatures$level", $false) }
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition @"
 using System;

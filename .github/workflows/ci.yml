@@ -46,11 +46,6 @@ jobs:
       - name: Offline accuracy benchmark
         run: node scripts/benchmark-offline.js ci
 
-      - name: Offline benchmark with every Harper rule enabled (comparison only)
-        run: node scripts/benchmark-offline.js ci-all-rules
-        env:
-          CLEARWRITE_HARPER_RULES: all
-
       - name: Upload benchmark report
         if: always()
         uses: actions/upload-artifact@v4

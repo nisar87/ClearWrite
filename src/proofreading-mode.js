@@ -86,11 +86,14 @@ export function createProofreadingRouter({ getMode, isAiReady, sendToProvider })
     //   { source: 'local', local, aiError }       AI-assisted request failed: fallback
     // A request cancelled by the user or a newer edit (cancelSignal) is not a failure and
     // rethrows instead of falling back.
-    async correctWithFallback(text, { proofreadLocal, signal, cancelSignal, localOnly = false } = {}) {
+    // `correct(text, requestAi)` may split the text into several requests; each still goes
+    // through requestAi and its Offline only gate.
+    async correctWithFallback(text, { proofreadLocal, signal, cancelSignal, localOnly = false, correct } = {}) {
       const local = proofreadLocal(text);
       if (localOnly || !canUseAi()) return { source: 'local', local: await local };
       try {
-        return { source: 'ai', output: await this.requestAi('correct', text, signal), local };
+        const request = (value) => this.requestAi('correct', value, signal);
+        return { source: 'ai', output: correct ? await correct(text, request) : await request(text), local };
       } catch (error) {
         if (cancelSignal?.aborted) throw error;
         return { source: 'local', local: await local, aiError: error };

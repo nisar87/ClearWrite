@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, stopWindowsInput, warmWindowsInput } from './windows-input.js';
 import { reviewAiCorrection, rewriteWarning } from './ai-changes.js';
+import { correctByParagraph, createParagraphCache } from './paragraph-review.js';
 import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -63,6 +64,8 @@ let monitorEditedResult;
 const reviewCache = createReviewCache();
 const reviewDebouncer = createDebouncer(REVIEW_DEBOUNCE_MS);
 const LOCAL_CHECK_PIECE_LENGTH = 6000;
+// AI corrections per paragraph, so unchanged paragraphs are not sent again (see paragraph-review.js).
+const paragraphCache = createParagraphCache();
 
 // Manual (selection + shortcut) session.
 let manual;
@@ -890,6 +893,11 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
       signal: withTimeout(controller.signal, AI_REVIEW_TIMEOUT_MS),
       cancelSignal: controller.signal,
       localOnly: !useAi,
+      correct: async (value, request) => {
+        const review = await correctByParagraph(value, { correct: request, cache: paragraphCache, cacheKey: providerKey });
+        if (review.sent + review.reused > 1) startup(`AI review by paragraph (sent=${review.sent}, reused=${review.reused}, chars=${review.sentCharacters})`);
+        return review.output;
+      },
     });
     if (controller.signal.aborted) return;
     if (result.source === 'ai' && isSafeCorrection(text, result.output)) {

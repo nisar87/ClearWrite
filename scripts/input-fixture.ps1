@@ -99,6 +99,7 @@ $form.Add_Shown({
         'setfiles' { $list = New-Object System.Collections.Specialized.StringCollection; [void]$list.Add((Decode $parts[1])); [System.Windows.Forms.Clipboard]::SetFileDropList($list) }
         'files' { $reply = (@{ files = (Encode ((@([System.Windows.Forms.Clipboard]::GetFileDropList()) -join '|'))) } | ConvertTo-Json -Compress) }
         'formats' { $reply = (@{ formats = (Encode (([System.Windows.Forms.Clipboard]::GetDataObject().GetFormats()) -join '|')) } | ConvertTo-Json -Compress) }
+        'rect' { $b = $form.Bounds; $reply = (@{ x = $b.X; y = $b.Y; width = $b.Width; height = $b.Height } | ConvertTo-Json -Compress) }
         'foreground' { $reply = (@{ foreground = ([FixtureWin]::GetForegroundWindow() -eq $form.Handle) } | ConvertTo-Json -Compress) }
         default { $reply = 'unknown' }
       }

@@ -138,3 +138,23 @@ test('composing spans gives the same text as composing the edits', async () => {
   }
   assert.equal(result, expected);
 });
+
+test('underline locators find each finding by whole words and unique same-line context', async () => {
+  const { underlineLocators, underlineLayout } = await import('./finding-edits.js');
+  const text = 'Please send teh mesage.\r\nThanks for teh help.';
+  const at = (word, nth = 0) => { let i = -1; for (let n = 0; n <= nth; n += 1) i = text.indexOf(word, i + 1); return i; };
+  const findings = [
+    finding(at('teh', 1), at('teh', 1) + 3, ['the'], 0, { start: at('teh', 1), end: at('teh', 1) + 3 }),
+    finding(at('mesage') + 1, at('mesage') + 3, ['ss'], 0, { start: at('mesage') + 1, end: at('mesage') + 3 }),
+    { ...finding(at('teh'), at('teh') + 3, ['the'], -1, { start: at('teh'), end: at('teh') + 3 }), ignored: true },
+  ];
+  const locators = underlineLocators(text, findings, 8);
+  assert.deepEqual(locators, [
+    { index: 1, before: 'end teh ', original: 'mesage', after: '.' },
+    { index: 0, before: 'nks for ', original: 'teh', after: ' help.' },
+  ], 'ignored findings are not underlined; context stops at line breaks and neighbours');
+  const layout = underlineLayout([{ index: 0, kind: 'Spelling', rects: [[100, 50, 30, 16]] }, { index: 1, kind: 'Grammar', rects: [[140, 50, 20, 16], [10, 70, 20, 16]] }], 4);
+  assert.deepEqual(layout.bounds, { x: 6, y: 46, width: 158, height: 44 });
+  assert.deepEqual(layout.items[1].rects, [[134, 4, 20, 16], [4, 24, 20, 16]]);
+  assert.equal(underlineLayout([{ index: 0, rects: [] }]), null);
+});

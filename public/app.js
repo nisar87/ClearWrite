@@ -178,6 +178,7 @@ function renderProofreading(state, { isGemini, connected }) {
     }
   }
   select.value = state.englishDialect || 'american';
+  $('underlines-toggle').checked = state.showUnderlines !== false;
   document.querySelectorAll('input[name="ai-scope"]').forEach((input) => {
     input.checked = input.value === (state.aiReviewScope || 'unsure');
     input.disabled = state.proofreadingMode !== 'ai';
@@ -242,6 +243,10 @@ document.querySelectorAll('input[name="proofreading-mode"]').forEach((input) => 
     if (current) render(current);
   }
 }));
+$('underlines-toggle').addEventListener('change', async () => {
+  try { await requireApi('setShowUnderlines')($('underlines-toggle').checked); showNotice($('underlines-toggle').checked ? 'Mistakes are underlined in supported editors.' : 'Underlines are off; suggestions stay in the panel.', true); }
+  catch (error) { showNotice(error.message, true); }
+});
 document.querySelectorAll('input[name="ai-scope"]').forEach((input) => input.addEventListener('change', async () => {
   if (!input.checked) return;
   try {

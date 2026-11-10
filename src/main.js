@@ -18,10 +18,10 @@ import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput } from './windows-input.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput, wordBoundsInWindow } from './windows-input.js';
 import { reviewAiCorrection, rewriteWarning } from './ai-changes.js';
 import { correctByParagraph, createParagraphCache } from './paragraph-review.js';
-import { chooseOption, chosenEdits, composeText, hasEdits, spansForEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
+import { chooseOption, chosenEdits, composeText, hasEdits, spansForEdits, underlineLayout, underlineLocators, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || (app.isPackaged
@@ -111,6 +111,8 @@ let state = {
   // AI-assisted mode: 'unsure' sends only paragraphs the on-device layers could not settle;
   // 'all' sends every changed paragraph.
   aiReviewScope: 'unsure',
+  // Wavy underlines drawn under findings in editors that report word positions.
+  showUnderlines: true,
   dictionaryWords: [],
   learnedPatterns: [],
   dictionaryLocation: '',
@@ -516,7 +518,7 @@ function keepPanelReachable() {
 
 function safeSender(event) {
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (![mainWindow, assistantWindow].includes(win) || !event.senderFrame?.url.startsWith('file://')) throw new Error('This action is only available inside ClearWrite.');
+  if (![mainWindow, assistantWindow, underlineWindow].includes(win) || !event.senderFrame?.url.startsWith('file://')) throw new Error('This action is only available inside ClearWrite.');
 }
 
 function handle(channel, fn) {
@@ -635,7 +637,109 @@ function manualView() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Underlines in the editor (Phase 6). A transparent, click-through, never-focused window draws
+// wavy lines under the current suggestion's findings, at word rectangles the input helper reads
+// through UI Automation. Hovering a line makes it clickable; a click opens the panel at that
+// finding. Lines are re-measured while visible (scrolling, moving) and removed on any edit.
+// ---------------------------------------------------------------------------
+let underlineWindow;
+let underlineTimer;
+let underlineBusy = false;
+let underlineKey = '';
+const UNDERLINE_REFRESH_MS = 900;
+
+function underlineTarget() {
+  if (!state.showUnderlines || !monitoringActive() || panel.mode === 'manual' || pendingWrite) return null;
+  if (monitorSession.phase !== 'suggestion') return null;
+  const snapshot = monitorSession.snapshot;
+  const suggestion = monitorSession.suggestion;
+  if (!snapshot?.runtimeId || !['value', 'text'].includes(snapshot.reader) || !hasEdits(suggestion?.findings)) return null;
+  const locators = underlineLocators(monitorSession.text, suggestion.findings);
+  if (!locators.length) return null;
+  return { snapshot, findings: suggestion.findings, locators, key: `${monitorSession.revision}|${suggestion.findings.map((finding) => `${finding.choice}${finding.ignored ? 'i' : ''}`).join(',')}` };
+}
+
+function hideUnderlines() {
+  clearInterval(underlineTimer);
+  underlineTimer = undefined;
+  underlineKey = '';
+  if (underlineWindow && !underlineWindow.isDestroyed() && underlineWindow.isVisible()) underlineWindow.hide();
+}
+
+function ensureUnderlineWindow() {
+  if (underlineWindow && !underlineWindow.isDestroyed()) return underlineWindow;
+  underlineWindow = new BrowserWindow({
+    show: false, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+    focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, backgroundColor: '#00000000',
+    webPreferences: { preload: path.join(root, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: false, spellcheck: false },
+  });
+  underlineWindow.setAlwaysOnTop(true, 'pop-up-menu');
+  underlineWindow.setIgnoreMouseEvents(true, { forward: true });
+  void underlineWindow.loadFile(path.join(root, '../public/underlines.html'));
+  return underlineWindow;
+}
+
+async function measureUnderlines() {
+  const target = underlineTarget();
+  if (!target) { hideUnderlines(); return; }
+  if (underlineBusy) return;
+  underlineBusy = true;
+  try {
+    const bounds = await wordBoundsInWindow({ target: target.snapshot.target, runtimeId: target.snapshot.runtimeId, spans: target.locators });
+    // The text or suggestion may have changed while measuring.
+    const current = underlineTarget();
+    if (!current || current.key !== target.key) return;
+    const items = target.locators.map((locator, position) => ({
+      index: locator.index,
+      kind: target.findings[locator.index].kind || '',
+      rects: (bounds[position] || []).map(([x, y, width, height]) => {
+        const dip = screen.screenToDipRect(null, { x, y, width, height });
+        return [dip.x, dip.y, dip.width, dip.height];
+      }),
+    }));
+    const layout = underlineLayout(items);
+    if (!layout) { if (underlineWindow?.isVisible()) underlineWindow.hide(); return; }
+    const win = ensureUnderlineWindow();
+    win.setBounds(layout.bounds);
+    win.webContents.send('underlines:state', { items: layout.items });
+    if (!win.isVisible()) win.showInactive();
+  } catch {
+    if (underlineWindow?.isVisible()) underlineWindow.hide();
+  } finally {
+    underlineBusy = false;
+  }
+}
+
+function scheduleUnderlines() {
+  const target = underlineTarget();
+  if (!target) { hideUnderlines(); return; }
+  if (target.key !== underlineKey) {
+    underlineKey = target.key;
+    if (underlineWindow?.isVisible()) underlineWindow.hide();
+    void measureUnderlines();
+  }
+  underlineTimer ??= setInterval(() => { void measureUnderlines(); }, UNDERLINE_REFRESH_MS);
+}
+
+async function openUnderline(index) {
+  if (!Number.isSafeInteger(index)) return;
+  underlineWindow?.setIgnoreMouseEvents(true, { forward: true });
+  await restorePanel();
+  publishAssistantView({ focusFinding: index });
+}
+
+async function setShowUnderlines(enabled) {
+  if (typeof enabled !== 'boolean') throw new Error('Choose whether to show underlines.');
+  state.showUnderlines = enabled;
+  if (!enabled) hideUnderlines();
+  await savePreferences();
+  publishState();
+  scheduleUnderlines();
+}
+
 function publishAssistantView(extra = {}) {
+  scheduleUnderlines();
   const view = panel.mode === 'manual' && manual ? manualView() : companionView();
   lastAssistantView = {
     ...view,
@@ -1656,6 +1760,9 @@ handle('app:set-monitor', setMonitorEnabled);
 handle('app:set-proofreading-mode', setProofreadingMode);
 handle('app:set-dialect', setEnglishDialect);
 handle('app:set-ai-scope', setAiReviewScope);
+handle('app:set-underlines', setShowUnderlines);
+handle('underlines:hover', (active) => { underlineWindow?.setIgnoreMouseEvents(!active, { forward: true }); });
+handle('underlines:open', openUnderline);
 handle('dictionary:list', () => personalDictionary.list());
 handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
 handle('learning:clear', async () => { await learningMemory.clear(); state.learnedPatterns = []; publishState(); });
@@ -1748,6 +1855,7 @@ async function loadPreferences() {
     }
     if (raw.provider === 'chatgpt' || raw.provider === 'gemini') state.provider = raw.provider;
     if (raw.aiReviewScope === 'all' || raw.aiReviewScope === 'unsure') state.aiReviewScope = raw.aiReviewScope;
+    if (typeof raw.showUnderlines === 'boolean') state.showUnderlines = raw.showUnderlines;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
       for (const provider of ['chatgpt', 'gemini']) {
         if (typeof raw.selectedModels[provider] === 'string' && raw.selectedModels[provider].length <= 120) selectedModels[provider] = raw.selectedModels[provider];
@@ -1804,6 +1912,7 @@ async function writePreferences() {
     proofreadingMode: state.proofreadingMode,
     englishDialect: state.englishDialect,
     aiReviewScope: state.aiReviewScope,
+    showUnderlines: state.showUnderlines,
     privacyDefaultsVersion: 1,
   };
   try { await writeFile(temporary, JSON.stringify(contents, null, 2), { flag: 'wx' }); await rename(temporary, file); }
@@ -1919,6 +2028,8 @@ app.on('before-quit', () => {
   focusMonitor?.kill();
   stopLocalProofreader();
   stopWindowsInput();
+  hideUnderlines();
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.destroy();
   globalShortcut.unregisterAll();
   tray?.destroy();
   chatgpt.cancelSignIn();

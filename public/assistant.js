@@ -164,6 +164,7 @@ function render(state) {
     const visible = findings.slice(0, 12);
     $('findings').replaceChildren(...visible.map(({ finding, index }) => {
       const item = document.createElement('li');
+      item.dataset.index = String(index);
       const choosable = Array.isArray(finding.edits);
       const chosen = choosable && !finding.ignored && finding.choice >= 0;
       item.classList.toggle('resolved', chosen);
@@ -211,6 +212,11 @@ function render(state) {
       if (controls.childElementCount) item.append(controls);
       return item;
     }));
+    // Opened from an underline in the editor: bring that finding into view and mark it.
+    if (Number.isSafeInteger(state.focusFinding)) {
+      const target = $('findings').querySelector(`li[data-index="${state.focusFinding}"]`);
+      if (target) { target.classList.add('focused'); target.scrollIntoView({ block: 'nearest' }); target.querySelector('button')?.focus(); }
+    }
     if (findings.length > visible.length) {
       const more = document.createElement('li');
       more.className = 'findings-more';

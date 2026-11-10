@@ -368,6 +368,53 @@ public static class ClearWriteInputHost {
     return "{\"id\":" + id + ",\"ok\":true,\"applied\":" + applied + ",\"total\":" + spans.Length + ",\"problem\":\"" + B64(problem) + "\"}";
   }
 
+  // Screen rectangles (physical pixels) of each span's original words in the focused editor,
+  // located like ReplaceSpans (unique context, exact read-back). Read-only: no focus change, no
+  // selection, no clipboard. Spans: "before\u0001original\u0001after" separated by \u0002.
+  // A span that cannot be located exactly gets no rectangles.
+  static string WordBounds(long id, IntPtr target, string runtimeId, string payload) {
+    var result = new StringBuilder("{\"id\":" + id + ",\"ok\":true,\"bounds\":[");
+    var spans = payload.Length == 0 ? new string[0] : payload.Split('\u0002');
+    TextPattern text = null;
+    if (GetForegroundWindow() == target) {
+      try {
+        var focused = AutomationElement.FocusedElement;
+        object pattern;
+        if (focused != null && string.Join(".", focused.GetRuntimeId()) == runtimeId && focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) text = (TextPattern)pattern;
+      } catch (Exception) { text = null; }
+    }
+    for (int index = 0; index < spans.Length; index++) {
+      if (index > 0) result.Append(',');
+      result.Append('[');
+      var parts = spans[index].Split('\u0001');
+      if (text != null && parts.Length == 3 && parts[1].Length > 0) {
+        try {
+          var document = text.DocumentRange;
+          var needle = parts[0] + parts[1] + parts[2];
+          var found = document.FindText(needle, false, false);
+          if (found != null) {
+            var rest = document.Clone();
+            rest.MoveEndpointByRange(System.Windows.Automation.Text.TextPatternRangeEndpoint.Start, found, System.Windows.Automation.Text.TextPatternRangeEndpoint.End);
+            bool unique = rest.FindText(needle, false, false) == null;
+            bool narrowed = (parts[0].Length == 0 || found.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.Start, System.Windows.Automation.Text.TextUnit.Character, parts[0].Length) == parts[0].Length)
+              && (parts[2].Length == 0 || found.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End, System.Windows.Automation.Text.TextUnit.Character, -parts[2].Length) == -parts[2].Length);
+            if (unique && narrowed && found.GetText(-1) == parts[1]) {
+              bool first = true;
+              foreach (var rect in found.GetBoundingRectangles()) {
+                if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0) continue;
+                if (!first) result.Append(',');
+                first = false;
+                result.Append("[" + (int)Math.Round(rect.X) + "," + (int)Math.Round(rect.Y) + "," + (int)Math.Round(rect.Width) + "," + (int)Math.Round(rect.Height) + "]");
+              }
+            }
+          }
+        } catch (Exception) { }
+      }
+      result.Append(']');
+    }
+    return result.Append("]}").ToString();
+  }
+
   static string B64(string value) { return Convert.ToBase64String(Encoding.UTF8.GetBytes(value ?? "")); }
   static string Unb64(string value) { return value == "-" ? "" : Encoding.UTF8.GetString(Convert.FromBase64String(value)); }
 
@@ -390,6 +437,10 @@ public static class ClearWriteInputHost {
         if (parts.Length < 6) throw new InvalidOperationException("Invalid request.");
         return Replace(id, action == "replace-field" ? "field" : "selection", new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]), Unb64(parts[5]));
       }
+      if (action == "word-bounds") {
+        if (parts.Length < 5) throw new InvalidOperationException("Invalid request.");
+        return WordBounds(id, new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]));
+      }
       if (action == "replace-spans") {
         if (parts.Length < 5) throw new InvalidOperationException("Invalid request.");
         return ReplaceSpans(id, new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]));
@@ -401,6 +452,8 @@ public static class ClearWriteInputHost {
   }
 
   public static void Run() {
+    // Physical pixels on every monitor, so word rectangles and the cursor position are exact.
+    try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
     // A message-only window owns ClearWrite's clipboard writes (SetClipboardData needs an owner).
     owner = CreateWindowEx(0, "STATIC", "ClearWrite input", 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
     var reader = new Thread(() => {

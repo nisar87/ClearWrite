@@ -130,3 +130,18 @@ export async function replaceSpansInWindow({ target, runtimeId, spans }) {
   const result = await request('replace-spans', target, [runtimeId, payload]);
   return { applied: result.applied, total: result.total, problem: unb64(result.problem) };
 }
+
+// Screen rectangles (physical pixels, [x, y, width, height]) of each span's original words in the
+// focused editor of `target`. spans: [{ before, original, after }]. Read-only. A span that cannot
+// be located exactly returns an empty list.
+export async function wordBoundsInWindow({ target, runtimeId, spans }) {
+  if (!Number.isSafeInteger(target) || target <= 0 || typeof runtimeId !== 'string' || !runtimeId) return spans.map(() => []);
+  const forbidden = /[\u0001\u0002]/;
+  const usable = spans.map((span) => [span.before, span.original, span.after].every((value) => typeof value === 'string' && !forbidden.test(value)) && span.original);
+  const payload = spans.filter((_, index) => usable[index]).map((span) => [span.before, span.original, span.after].join('\u0001')).join('\u0002');
+  if (!payload) return spans.map(() => []);
+  const result = await request('word-bounds', target, [runtimeId, payload]);
+  const bounds = Array.isArray(result.bounds) ? result.bounds : [];
+  let next = 0;
+  return spans.map((_, index) => (usable[index] ? (bounds[next++] || []) : []));
+}

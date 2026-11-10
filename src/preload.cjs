@@ -56,6 +56,14 @@ contextBridge.exposeInMainWorld('clearWrite', {
     ipcRenderer.on('live:delta', listener);
     return () => ipcRenderer.removeListener('live:delta', listener);
   },
+  underlineHover: (active) => ipcRenderer.invoke('underlines:hover', active),
+  openUnderline: (index) => ipcRenderer.invoke('underlines:open', index),
+  setShowUnderlines: (enabled) => ipcRenderer.invoke('app:set-underlines', enabled),
+  onUnderlines: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('underlines:state', listener);
+    return () => ipcRenderer.removeListener('underlines:state', listener);
+  },
   onState: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('app:state', listener);

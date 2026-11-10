@@ -6,8 +6,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput } from '../src/windows-input.js';
-import { spansForEdits } from '../src/finding-edits.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput, wordBoundsInWindow } from '../src/windows-input.js';
+import { spansForEdits, underlineLocators } from '../src/finding-edits.js';
 
 const fixturePath = fileURLToPath(new URL('./input-fixture.ps1', import.meta.url));
 const ORIGINAL = 'Please send teh report today.';
@@ -220,4 +220,29 @@ test('in-place fixes refuse ambiguous or changed text and change nothing', async
   const wrongField = await replaceSpansInWindow({ target: hwnd, runtimeId: '42.1', spans: [{ before: 'send ', original: 'teh', after: ' mesage', replacement: 'the' }] });
   assert.equal(wrongField.applied, 0);
   assert.equal(await richText(), before);
+});
+
+test('word rectangles for underlines lie inside the editor window, in reading order', async () => {
+  await resetRich();
+  const { runtimeId, text } = fieldRuntimeId(true);
+  const window = await command('rect');
+  const at = (word, occurrence = 0) => editAt(text, word, word, occurrence);
+  const findings = [at('mesage'), at('teh', 1)].map((edit) => ({ edits: [edit], choice: 0, start: edit.start, end: edit.end }));
+  const locators = underlineLocators(text, findings);
+  const bounds = await wordBoundsInWindow({ target: hwnd, runtimeId, spans: locators });
+  assert.equal(bounds.length, 2);
+  for (const rects of bounds) {
+    assert.ok(rects.length >= 1, JSON.stringify(bounds));
+    for (const [x, y, w, h] of rects) {
+      assert.ok(w > 0 && h > 0);
+      assert.ok(x >= window.x && y >= window.y && x + w <= window.x + window.width && y + h <= window.y + window.height, `${[x, y, w, h]} outside ${JSON.stringify(window)}`);
+    }
+  }
+  const [mesage] = bounds[0];
+  const [teh] = bounds[1];
+  assert.ok(teh[0] > mesage[0] || teh[1] > mesage[1], 'the later word is to the right or below');
+  const ambiguous = await wordBoundsInWindow({ target: hwnd, runtimeId, spans: [{ before: '', original: 'teh', after: '' }] });
+  assert.deepEqual(ambiguous, [[]], 'ambiguous text is not underlined');
+  const otherField = await wordBoundsInWindow({ target: hwnd, runtimeId: '42.1', spans: locators });
+  assert.deepEqual(otherField, [[], []], 'nothing is measured in another field');
 });

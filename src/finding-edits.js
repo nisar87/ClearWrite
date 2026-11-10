@@ -207,3 +207,52 @@ export function spansForEdits(text, edits, context = 24) {
     };
   }).filter((span) => span.original && span.original !== span.replacement);
 }
+
+// Locators for underlining findings in the editor: each finding's words (whole words) with up to
+// `context` characters of same-line text around them, not reaching into another finding.
+// Returns [{ index, before, original, after }] in text order (index = position in `findings`).
+export function underlineLocators(text, findings, context = 24) {
+  const source = points(text);
+  const ranges = findings
+    .map((finding, index) => ({ finding, index }))
+    .filter(({ finding }) => Array.isArray(finding.edits) && !finding.ignored && Number.isSafeInteger(finding.start) && Number.isSafeInteger(finding.end))
+    .map(({ finding, index }) => {
+      let start = finding.start;
+      let end = finding.end;
+      while (start > 0 && WORD.test(source[start - 1])) start -= 1;
+      while (end < source.length && WORD.test(source[end])) end += 1;
+      if (start === end && end < source.length && !BREAK.test(source[end])) end += 1;
+      return { index, start, end };
+    })
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start);
+  return ranges.map((range, position) => {
+    const floor = position > 0 ? Math.max(ranges[position - 1].end, 0) : 0;
+    const ceiling = position + 1 < ranges.length ? ranges[position + 1].start : source.length;
+    let from = range.start;
+    while (from > floor && range.start - from < context && !BREAK.test(source[from - 1])) from -= 1;
+    let to = range.end;
+    while (to < ceiling && to - range.end < context && !BREAK.test(source[to])) to += 1;
+    return {
+      index: range.index,
+      before: source.slice(from, range.start).join(''),
+      original: source.slice(range.start, range.end).join(''),
+      after: source.slice(range.end, to).join(''),
+    };
+  }).filter((locator) => locator.original.trim());
+}
+
+// Overlay layout: the union of all rectangles (already in screen DIPs), inflated by `margin`,
+// and each underline's rectangles relative to it. items: [{ index, kind, rects: [[x,y,w,h]] }].
+export function underlineLayout(items, margin = 4) {
+  const all = items.flatMap((item) => item.rects);
+  if (!all.length) return null;
+  const left = Math.floor(Math.min(...all.map(([x]) => x)) - margin);
+  const top = Math.floor(Math.min(...all.map(([, y]) => y)) - margin);
+  const right = Math.ceil(Math.max(...all.map(([x, , w]) => x + w)) + margin);
+  const bottom = Math.ceil(Math.max(...all.map(([, y, , h]) => y + h)) + margin);
+  return {
+    bounds: { x: left, y: top, width: right - left, height: bottom - top },
+    items: items.filter((item) => item.rects.length).map((item) => ({ ...item, rects: item.rects.map(([x, y, w, h]) => [x - left, y - top, w, h]) })),
+  };
+}

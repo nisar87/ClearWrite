@@ -111,3 +111,30 @@ jobs:
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
+
+  # Phase 3 evaluation: a small sentence-level grammar model on the same benchmark, raw and
+  # through ClearWrite's meaning guard. Evaluation only; nothing here ships.
+  model-eval:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install the evaluation runtime (not saved)
+        run: npm install --no-save --no-audit --no-fund @huggingface/transformers@3
+      - name: Evaluate t5-tiny grammar model (MIT, C4_200M)
+        run: node scripts/evaluate-gec-model.js rabden/t5-tiny-gec-hone t5-tiny
+      - name: Upload model reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-eval
+          path: benchmark/results/
+          if-no-files-found: ignore

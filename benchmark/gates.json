@@ -1,9 +1,9 @@
 {
   "minimum": {
     "spellingSelected": 11,
-    "grammarExact": 0,
-    "holdoutExact": 0,
-    "holdoutDetected": 0
+    "grammarExact": 38,
+    "holdoutExact": 25,
+    "holdoutDetected": 28
   },
   "maximum": {
     "spellingWrong": 0,

@@ -224,6 +224,15 @@ function render(state) {
       $('findings').append(more);
     }
     show('findings', findings.length > 0);
+    const hints = Array.isArray(state.hints) ? state.hints : [];
+    $('hints').replaceChildren(...hints.map((hint) => {
+      const item = document.createElement('li');
+      const label = document.createElement('b');
+      label.textContent = 'Clarity';
+      item.append(label, ` ${hint.message}`);
+      return item;
+    }));
+    show('hints', hints.length > 0);
   } else {
     $('source-text').textContent = state.text || '';
   }

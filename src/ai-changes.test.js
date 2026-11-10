@@ -72,3 +72,14 @@ test('identical text yields no changes; rewrites get a meaning warning', () => {
   assert.equal(rewriteWarning('Ship 3 boxes, not 4.', 'Please ship three boxes rather than four.'), 'Check the result: it changes a number and a negation (not, no, never…).');
   assert.equal(rewriteWarning('Thanks for the update.', 'Thank you for the update.'), '');
 });
+
+test('each AI change carries a plain reason', async () => {
+  const { describeChange } = await import('./ai-changes.js');
+  assert.equal(describeChange('teh', 'the'), 'Spelling.');
+  assert.equal(describeChange('friday', 'Friday'), 'Capitalisation.');
+  assert.equal(describeChange('', ','), 'Punctuation: add a mark here.');
+  assert.equal(describeChange('dont', "don't"), 'Punctuation or spacing.');
+  assert.equal(describeChange('are', 'is'), 'Word choice or grammar.');
+  const review = reviewAiCorrection('Please send teh report by friday', 'Please send the report by Friday.');
+  assert.deepEqual(review.findings.map((finding) => finding.message), ['Spelling.', 'Capitalisation and punctuation.']);
+});

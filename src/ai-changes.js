@@ -125,6 +125,23 @@ export function changeHunks(original, corrected) {
   return hunks;
 }
 
+// A plain one-line reason for an AI change, from what changed.
+export function describeChange(before, after) {
+  const a = before.trim();
+  const b = after.trim();
+  if (!a) return /^[\p{P}\s]+$/u.test(b) ? 'Punctuation: add a mark here.' : 'Grammar: a missing word.';
+  if (!b) return /^[\p{P}\s]+$/u.test(a) ? 'Punctuation: remove this mark.' : 'Grammar: this word is not needed.';
+  if (a.toLocaleLowerCase() === b.toLocaleLowerCase()) return 'Capitalisation.';
+  const letters = (value) => value.replace(/[^\p{L}\p{N}]/gu, '').toLocaleLowerCase();
+  if (letters(a) === letters(b)) {
+    const cased = (value) => value.replace(/[^\p{L}\p{N}]/gu, '');
+    return cased(a) === cased(b) ? 'Punctuation or spacing.' : 'Capitalisation and punctuation.';
+  }
+  const single = !/\s/.test(a) && !/\s/.test(b);
+  if (single && editDistance(letters(a), letters(b)) <= Math.max(2, Math.floor(Math.max(a.length, b.length) / 3))) return 'Spelling.';
+  return 'Word choice or grammar.';
+}
+
 // Findings (same shape as on-device findings) for an AI correction. Safe changes are
 // pre-selected; meaning-changing ones need explicit acceptance.
 export function aiFindings(original, corrected) {
@@ -133,7 +150,7 @@ export function aiFindings(original, corrected) {
     const prefix = points.slice(0, hunk.start).join('');
     const risks = meaningRisks(hunk.before, hunk.after, !prefix.trim() || /[.!?]["'”’)\]]*\s*$/u.test(prefix));
     return {
-      message: riskMessage(risks),
+      message: riskMessage(risks) || describeChange(hunk.before, hunk.after),
       original: hunk.before.trim() ? hunk.before : '(insertion)',
       suggestions: [hunk.after],
       edits: [{ start: hunk.start, end: hunk.end, text: hunk.after }],

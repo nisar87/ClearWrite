@@ -13,6 +13,7 @@ import { configureLocalProofreader, proofreadLocally, stopLocalProofreader } fro
 import { actionRequiresAi, createProofreadingRouter, ENGLISH_DIALECTS, migrateProofreadingPreferences, normalizeEnglishDialect, normalizeProofreadingMode, OfflineModeError } from './proofreading-mode.js';
 import { createPersonalDictionary } from './personal-dictionary.js';
 import { applyLearning, createLearningMemory } from './learning-memory.js';
+import { clarityHints } from './clarity-hints.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -607,6 +608,7 @@ function companionView() {
   if (pendingWrite) { view.canApply = false; view.canUndo = false; view.statusLine = pendingWrite.kind === 'undo' ? 'Undoing…' : 'Applying…'; }
   if (view.status === 'working' && monitorAction?.revision === monitorSession.revision) view.statusLine = `${monitorAction.label} with ${providerName()}…`;
   if (pendingWrite || !isReviewableText(view.text)) view.actions = [];
+  if (view.suggestion && view.text) view.hints = clarityHints(view.text);
   return view;
 }
 
@@ -631,6 +633,7 @@ function manualView() {
     findings: manual.findings || [],
     note: manual.note || '',
     needsChoice: manual.needsChoice || 0,
+    hints: done ? clarityHints(manual.text) : [],
     connected: router.canUseAi(),
     provider: state.provider,
     providerName: providerName(),

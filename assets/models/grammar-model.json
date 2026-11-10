@@ -5,13 +5,13 @@
   "baseModel": "https://huggingface.co/visheratin/t5-efficient-tiny-grammar-correction",
   "license": "MIT (model and base model); trained on a subset of Google's C4_200M synthetic GEC data",
   "repo": "rabden/t5-tiny-gec-hone",
-  "revision": "",
+  "revision": "d5f27b81d5316bd689977d722d3ed513bbb9122c",
   "files": {
-    "config.json": "",
-    "generation_config.json": "",
-    "tokenizer.json": "",
-    "tokenizer_config.json": "",
-    "onnx/encoder_model_quantized.onnx": "",
-    "onnx/decoder_model_merged_quantized.onnx": ""
+    "config.json": "d06a1074bdcca5fbf9f82cc8b5255d26a188eeaf432e4a061f34a693f376c1cf",
+    "generation_config.json": "1b2228d5cc5a1c71b8a6301b2789c852a0db9f32a4a07bd83e69a61b14027b57",
+    "tokenizer.json": "d7af4599a1914d04aaf44839418757f40ccca4c78033edeba369484978378335",
+    "tokenizer_config.json": "fb20bc34a5b9e424c29d0aa8cf4754a7f0e42cf8ff5ba304dec219c54854dba9",
+    "onnx/encoder_model_quantized.onnx": "baa41f33481ca2db5d2b458d3bd50a879f0b6b054fd101fa1e68bb3c41b724a4",
+    "onnx/decoder_model_merged_quantized.onnx": "dfce028e696fcb8156ac3571acf8eafca650768453bdcd6295fda910ae61d6d9"
   }
 }

@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Fetch the on-device grammar model (pinned, checksum-verified)
+        run: npm run model:fetch
+
       - name: Syntax check
         run: npm run check
 
@@ -78,6 +81,9 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       # electron-builder packages node_modules/electron/dist; make sure the binary is present.
+      - name: Fetch the on-device grammar model (pinned, checksum-verified)
+        run: npm run model:fetch
+
       - name: Download the Electron binary
         shell: pwsh
         run: |
@@ -127,11 +133,6 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
-      - name: Install the evaluation runtime (not saved)
-        run: npm install --no-save --no-audit --no-fund @huggingface/transformers@3
-      - name: Record grammar model revision and checksums
-        run: node scripts/fetch-grammar-model.js --record
-
       - name: Evaluate t5-tiny grammar model (MIT, C4_200M)
         run: node scripts/evaluate-gec-model.js rabden/t5-tiny-gec-hone t5-tiny
       - name: Upload model reports

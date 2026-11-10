@@ -189,3 +189,18 @@ test('a dropped apostrophe is offered as the contraction', async () => {
   assert.equal(finding.suggestions[0], "don't", `offered: ${finding.suggestions.join(', ')}`);
   assert.equal(review.correctedText, "I don't think we should wait.");
 });
+
+test('the on-device grammar model adds context fixes Harper misses, when its files are installed', async (t) => {
+  const { access } = await import('node:fs/promises');
+  try { await access(new URL('../assets/models/gec-t5-tiny/onnx/decoder_model_merged_quantized.onnx', import.meta.url)); }
+  catch { t.skip('grammar model not fetched (npm run model:fetch)'); return; }
+  configureLocalProofreader({ dialect: 'american', words: [] });
+  const review = await proofreadLocally('The report are ready for review.');
+  const finding = review.findings.find((item) => item.source === 'model');
+  assert.ok(finding, JSON.stringify(review.findings));
+  assert.equal(finding.original, 'are');
+  assert.equal(finding.suggestions[0], 'is');
+  assert.equal(review.correctedText, 'The report is ready for review.');
+  const clean = await proofreadLocally('Her presentation covered pricing, onboarding and support.');
+  assert.deepEqual(clean.findings, [], 'correct text is left alone');
+});

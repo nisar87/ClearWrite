@@ -2,6 +2,7 @@ import { parentPort } from 'node:worker_threads';
 import { selectSpellingCandidate } from './spelling-selection.js';
 import { loadContextSpeller, protectedSpans } from './context-spelling.js';
 import { composeText, diffSpan } from './finding-edits.js';
+import { modelFindings } from './grammar-model.js';
 
 const [{ LocalLinter, Dialect }, { binaryInlined }] = await Promise.all([
   import('harper.js'),
@@ -31,6 +32,7 @@ parentPort.postMessage({ type: 'ready' });
 let contextSpeller;
 let contextUnavailable = false;
 const useContext = process.env.CLEARWRITE_OFFLINE_CONTEXT !== '0';
+const useModel = process.env.CLEARWRITE_OFFLINE_MODEL !== '0';
 
 const englishClues = new Set('a an and are as at be been but can could did do does for from had has have he hello how i in is it me my of on or our please she should that the their them then they this to was we were what when where which will with would you your'.split(' '));
 
@@ -133,6 +135,16 @@ async function proofread(text) {
   }
 
   findings.reverse();
+  // On-device grammar model: extra, filtered findings where Harper found nothing.
+  if (useModel) {
+    try {
+      const extra = await modelFindings(text, { speller: contextSpeller, protectedRanges, covered: findings });
+      if (extra.length) {
+        findings.push(...extra);
+        findings.sort((a, b) => a.start - b.start);
+      }
+    } catch { /* The model is an optional layer; Harper's result stands. */ }
+  }
   return { supported: true, correctedText: composeText(text, findings), findings, reason: contextUnavailable ? 'Context data unavailable; basic offline checking was used.' : '' };
 }
 

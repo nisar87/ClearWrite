@@ -1,8 +1,8 @@
 {
   "minimum": {
     "spellingSelected": 11,
-    "grammarExact": 38,
-    "holdoutExact": 25,
+    "grammarExact": 42,
+    "holdoutExact": 27,
     "holdoutDetected": 28
   },
   "maximum": {

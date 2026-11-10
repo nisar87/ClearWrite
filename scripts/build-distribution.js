@@ -47,6 +47,8 @@ async function copyDependency(name, from) {
     filter: (file) => {
       const parts = path.relative(source, file).split(path.sep);
       if (name === '@siwc/local' && parts[0] && !['dist', 'package.json'].includes(parts[0])) return false;
+      // ONNX Runtime ships native binaries for every platform; the Windows x64 package needs one.
+      if (name === 'onnxruntime-node' && parts[0] === 'bin' && ((parts[2] && parts[2] !== 'win32') || (parts[3] && parts[3] !== 'x64'))) return false;
       return !parts.some((part) => ['node_modules', '.git', 'test', 'tests', '.cache'].includes(part));
     },
   });
@@ -57,6 +59,12 @@ async function copyDependency(name, from) {
     await readFile(path.join(destination, 'dist/index.js'));
   }
   for (const dependency of Object.keys(metadata.dependencies || {})) await copyDependency(dependency, source);
+  // Optional dependencies hold platform binaries (for example sharp's Windows build): copy the
+  // ones npm installed for this platform, skip the rest.
+  for (const dependency of Object.keys(metadata.optionalDependencies || {})) {
+    if (dependency === '@siwc/local') continue;
+    try { await copyDependency(dependency, source); } catch (error) { if (!/Cannot locate/.test(error.message)) throw error; }
+  }
   return metadata.version;
 }
 

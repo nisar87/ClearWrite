@@ -15,6 +15,8 @@ export function spellingDistance(a, b) {
 }
 
 function insertionCost(word, index) {
+  // A missing apostrophe ("dont", "isnt") is one of the most common typing omissions.
+  if (word[index] === "'" || word[index] === '’') return 0.3;
   // Dropped repeated letters and vowels are common typing errors. These are generic
   // character costs, not word-specific replacements or a claim of semantic confidence.
   if (word[index] === word[index - 1] || word[index] === word[index + 1]) return 0.5;

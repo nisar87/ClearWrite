@@ -54,7 +54,9 @@ export function createContextSpeller({ unigrams, bigrams }) {
           if (Math.abs(candidate.length - word.length) <= 2 && spellingDistance(word, candidate) <= 2) expanded.add(candidate);
         }
       }
-      const scored = [...expanded].filter((candidate) => /^[a-z]{2,26}$/.test(candidate)).map((candidate) => {
+      // Contractions such as "don't" come only from Harper (the index holds plain words); keep
+      // them, normalising the typographic apostrophe so they are scored like other candidates.
+      const scored = [...expanded].map((candidate) => candidate.replace(/’/g, "'")).filter((candidate) => /^[a-z]{2,26}$/.test(candidate) || /^[a-z]+'[a-z]{1,3}$/.test(candidate)).map((candidate) => {
         const edits = spellingDistance(word, candidate);
         const context = (left ? lift(left, candidate) : 0) + (right ? lift(candidate, right) : 0);
         const score = -2 * edits + 0.25 * Math.log10(1 + (frequencies.get(candidate) || 0)) + 0.9 * context;
@@ -65,7 +67,7 @@ export function createContextSpeller({ unigrams, bigrams }) {
       const contextual = best?.context >= 1;
       const baseline = selectSpellingCandidate({ text: word, start: 0, end: word.length, candidates: scored.map((entry) => entry.candidate) });
       const selected = canSelect && best && ((best.edits <= (contextual ? 2 : 1.5) && margin >= 0.75) || baseline === 0) ? 0 : -1;
-      const restoreCase = (value) => candidates.find((candidate) => candidate.toLowerCase() === value)
+      const restoreCase = (value) => candidates.find((candidate) => candidate.toLowerCase().replace(/’/g, "'") === value)
         || (/^[A-Z][a-z]+$/.test(original) ? value[0].toUpperCase() + value.slice(1) : value);
       if (selected < 0 && canSelect && candidates.length === 1 && /^[A-Za-z]+$/.test(candidates[0])) {
         return { candidates: [candidates[0], ...scored.map((entry) => restoreCase(entry.candidate)).filter((candidate) => candidate !== candidates[0])], selected: 0 };

@@ -38,3 +38,16 @@ test('protected spans use code-point offsets and include embedded identifiers', 
   const ranges = protectedSpans(text);
   assert.deepEqual(ranges.map(({ start, end }) => [...text].slice(start, end).join('')), ['quet@example.com', 'getUserProfile']);
 });
+
+test('contraction candidates from Harper are kept and a missing apostrophe is a cheap edit', () => {
+  const model = createContextSpeller({
+    unigrams: [['i', 10000], ['not', 9000], ['dot', 500], ['don', 300], ['think', 5000], ['so', 8000]],
+    bigrams: [['i', 'not', 10], ['not', 'think', 5]],
+  });
+  const text = 'I dont think so.';
+  const ranked = model.rank({ text, start: 2, end: 6, candidates: ["don't", 'not', 'dot'] });
+  assert.ok(ranked.candidates.includes("don't"), 'the contraction is offered');
+  assert.equal(ranked.candidates[ranked.selected], "don't");
+  const curly = model.rank({ text, start: 2, end: 6, candidates: ['don’t', 'not'] });
+  assert.equal(curly.candidates[0], 'don’t', "Harper's own spelling of the candidate is preserved");
+});

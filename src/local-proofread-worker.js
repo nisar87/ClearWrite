@@ -13,6 +13,17 @@ const [{ LocalLinter, Dialect }, { binaryInlined }] = await Promise.all([
 const linter = new LocalLinter({ binary: binaryInlined, dialect: Dialect.American });
 const DIALECTS = { american: Dialect.American, british: Dialect.British, australian: Dialect.Australian, canadian: Dialect.Canadian, indian: Dialect.Indian };
 await linter.setup();
+// Benchmark-only switches (never set by the app): report Harper's rule configuration, or
+// enable every rule, to evaluate which disabled rules would help without false alarms.
+if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
+  const config = await linter.getLintConfig();
+  const off = Object.entries(config).filter(([, value]) => value !== true).map(([name, value]) => `${name}=${value}`);
+  console.error(`harper rules: ${Object.keys(config).length} total; not enabled: ${off.join(', ')}`);
+}
+if (process.env.CLEARWRITE_HARPER_RULES === 'all') {
+  const config = await linter.getLintConfig();
+  await linter.setLintConfig(Object.fromEntries(Object.keys(config).map((name) => [name, true])));
+}
 parentPort.postMessage({ type: 'ready' });
 let contextSpeller;
 let contextUnavailable = false;

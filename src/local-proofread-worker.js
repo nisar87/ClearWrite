@@ -13,12 +13,16 @@ const [{ LocalLinter, Dialect }, { binaryInlined }] = await Promise.all([
 const linter = new LocalLinter({ binary: binaryInlined, dialect: Dialect.American });
 const DIALECTS = { american: Dialect.American, british: Dialect.British, australian: Dialect.Australian, canadian: Dialect.Canadian, indian: Dialect.Indian };
 await linter.setup();
+// Rules turned off in ClearWrite: style preferences that change correct text, measured as false
+// alarms on the clean-prose benchmark (OxfordComma added a comma to "pricing, onboarding and support").
+const DISABLED_RULES = { OxfordComma: false };
+
 // Benchmark-only switch (never set by the app): enable every Harper rule, or a comma-separated
 // list of extra rules, to measure which disabled rules help without false alarms.
 const ruleOverride = process.env.CLEARWRITE_HARPER_RULES || '';
 async function applyRuleOverrides() {
-  if (!ruleOverride) return;
   const config = await linter.getLintConfig();
+  if (!ruleOverride) { await linter.setLintConfig({ ...config, ...DISABLED_RULES }); return; }
   const names = ruleOverride === 'all' ? Object.keys(config) : ruleOverride.split(',').map((name) => name.trim()).filter(Boolean);
   await linter.setLintConfig({ ...config, ...Object.fromEntries(names.map((name) => [name, true])) });
 }
@@ -32,6 +36,15 @@ const englishClues = new Set('a an and are as at be been but can could did do do
 
 function codePointSlice(text, start, end) {
   return [...text].slice(start, end).join('');
+}
+
+// "wont" -> "won't": a negative contraction missing its apostrophe, when Harper accepts the
+// result as correctly spelled. Only n't endings: others ("were" -> "we're") are usually right as typed.
+async function apostropheVariant(word) {
+  if (!/nt$/i.test(word)) return '';
+  const variant = `${word.slice(0, -1)}'${word.slice(-1)}`;
+  const lints = await linter.lint(variant, { language: 'plaintext' });
+  return lints.some((lint) => lint.lint_kind() === 'Spelling') ? '' : variant;
 }
 
 function skipped(reason) {
@@ -71,7 +84,11 @@ async function proofread(text) {
     if (protectedRanges.some((range) => span.start < range.end && span.end > range.start)) continue;
     const suggestions = lint.suggestions();
     let candidates = suggestions.map((suggestion) => suggestion.get_replacement_text());
-    let selected = suggestions.length === 1 ? 0 : lint.lint_kind() === 'Spelling'
+    // A real word that is also a contraction without its apostrophe ("wont" -> "won't") is
+    // ambiguous: offer the contraction first and let the writer choose.
+    const flagged = codePointSlice(text, span.start, span.end);
+    const contraction = lint.lint_kind() !== 'Spelling' && /^[A-Za-z]{3,12}$/.test(flagged) ? await apostropheVariant(flagged) : '';
+    let selected = contraction ? -1 : suggestions.length === 1 ? 0 : lint.lint_kind() === 'Spelling'
       ? selectSpellingCandidate({ text, start: span.start, end: span.end, candidates }) : -1;
     const spellingEdit = lint.lint_kind() === 'Spelling' || (lint.lint_kind() === 'Typo' && /^[A-Za-z]{3,24}$/.test(codePointSlice(text, span.start, span.end)));
     if (useContext && contextSpeller && spellingEdit) {
@@ -97,10 +114,15 @@ async function proofread(text) {
       if (spellingEdit) edits.push({ start: span.start, end: span.end, text: candidates[index] });
       else edits.push(diffSpan(text, await linter.applySuggestion(text, lint, suggestions[index])));
     }
+    const labels = order.map((index) => candidates[index]);
+    if (contraction && !labels.includes(contraction)) {
+      edits.unshift({ start: span.start, end: span.end, text: contraction });
+      labels.unshift(contraction);
+    }
     findings.push({
       message: lint.message(),
       original: codePointSlice(text, span.start, span.end),
-      suggestions: order.map((index) => candidates[index]),
+      suggestions: labels,
       edits,
       choice: selected >= 0 ? 0 : -1,
       appliedLocally: selected >= 0,

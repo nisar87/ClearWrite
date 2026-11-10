@@ -65,14 +65,19 @@ export function createContextSpeller({ unigrams, bigrams }) {
       // The same letters with an apostrophe added ("dont" -> "don't") is almost certainly the
       // intended contraction. Harper proposed it, so it is a real word; the statistical model has
       // no contractions and would otherwise rank it below unrelated common words.
+      // Only negative contractions ("dont" -> "don't") are certain enough to pre-select: other
+      // endings ('re, 's, 've, 'll, 'd, 'm) collide with possessives ("theyre report" means
+      // "their report"), so those are offered first but left for the writer to choose.
       const contraction = scored.findIndex((entry) => entry.candidate.includes("'") && entry.candidate.replace(/'/g, '') === word);
       if (contraction > 0) scored.unshift(...scored.splice(contraction, 1));
-      if (contraction >= 0) scored[0] = { ...scored[0], score: Infinity };
+      const certainContraction = contraction >= 0 && /n't$/.test(scored[0].candidate);
+      if (certainContraction) scored[0] = { ...scored[0], score: Infinity };
+      const offerOnly = contraction >= 0 && !certainContraction;
       const best = scored[0];
       const margin = best ? best.score - (scored[1]?.score ?? -Infinity) : 0;
       const contextual = best?.context >= 1;
       const baseline = selectSpellingCandidate({ text: word, start: 0, end: word.length, candidates: scored.map((entry) => entry.candidate) });
-      const selected = canSelect && best && ((best.edits <= (contextual ? 2 : 1.5) && margin >= 0.75) || baseline === 0) ? 0 : -1;
+      const selected = !offerOnly && canSelect && best && ((best.edits <= (contextual ? 2 : 1.5) && margin >= 0.75) || baseline === 0) ? 0 : -1;
       const restoreCase = (value) => candidates.find((candidate) => candidate.toLowerCase().replace(/’/g, "'") === value)
         || (/^[A-Z][a-z]+$/.test(original) ? value[0].toUpperCase() + value.slice(1) : value);
       if (selected < 0 && canSelect && candidates.length === 1 && /^[A-Za-z]+$/.test(candidates[0])) {

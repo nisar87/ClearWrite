@@ -30,7 +30,8 @@ try {
       exact: item.expected ? output === item.expected : undefined,
       wrongChange: item.expected ? output !== item.text && output !== item.expected : undefined, ms: Math.round((performance.now() - start) * 100) / 100, supported: result.supported,
       clean: Boolean(item.clean), changedClean: Boolean(item.clean && result.supported && result.correctedText !== item.text),
-      cleanFindings: item.clean ? result.findings.length : 0, fixes, output: result.correctedText || item.text });
+      cleanFindings: item.clean ? result.findings.length : 0, fixes, output: result.correctedText || item.text,
+      findings: result.findings.map((finding) => ({ original: finding.original, kind: finding.kind, suggestions: finding.suggestions, choice: finding.choice })) });
   }
   configureLocalProofreader({ dialect: 'american', words: [] });
   for (const words of [10, 50, 500]) {
@@ -66,6 +67,6 @@ const summarize = (split) => {
 const report = { label: process.argv[2] || 'current', coldStartMs: rows[0].ms, peakRssMiB: Math.round(process.resourceUsage().maxRSS / 1024), steadyRssMiB, performanceSamples, summary: { dev: summarize('dev'), test: summarize('test'), grammar: summarize('grammar'), prose: summarize('prose') }, rows };
 await mkdir(new URL('../benchmark/results/', import.meta.url), { recursive: true });
 await writeFile(new URL(`../benchmark/results/${report.label.replace(/[^a-z0-9-]/gi, '-')}.json`, import.meta.url), JSON.stringify(report, null, 2) + '\n');
-for (const row of rows.filter((item) => item.expected && !item.exact)) console.log(`grammar miss ${row.id}: ${JSON.stringify(row.output)}`);
+for (const row of rows.filter((item) => item.expected && !item.exact)) console.log(`grammar miss ${row.id}: ${JSON.stringify(row.output)} ${JSON.stringify(row.findings)}`);
 for (const row of rows.filter((item) => item.split === 'prose' && (item.changedClean || item.cleanFindings))) console.log(`prose flagged ${row.id}: ${JSON.stringify(row.output)} (${row.cleanFindings} findings)`);
 console.log(JSON.stringify({ coldStartMs: report.coldStartMs, peakRssMiB: report.peakRssMiB, steadyRssMiB, performanceSamples, ...report.summary }, null, 2));

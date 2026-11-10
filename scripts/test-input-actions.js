@@ -99,6 +99,17 @@ test('verified paste refuses when the focused element changed', async () => {
   assert.equal(await fieldText(), ORIGINAL);
 });
 
+test('diagnostic: how the production reader sees a native edit in another process', async () => {
+  await reset(0, 0);
+  const { execFileSync } = await import('node:child_process');
+  const script = fileURLToPath(new URL('./read-focused-editor.ps1', import.meta.url));
+  for (const extra of [[], ['-Proxies']]) {
+    try {
+      console.log(extra.join(' ') || 'default', execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd), ...extra], { encoding: 'utf8' }).trim());
+    } catch (error) { console.log(extra.join(' ') || 'default', 'error', String(error.stderr || error.message).slice(0, 400)); }
+  }
+});
+
 test('field replacement checks the exact text before replacing everything', async () => {
   await reset(0, 0);
   const check = await copySelectionInWindow(hwnd).catch(() => ({ runtimeId: '' }));

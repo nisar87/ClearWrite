@@ -99,15 +99,14 @@ test('verified paste refuses when the focused element changed', async () => {
   assert.equal(await fieldText(), ORIGINAL);
 });
 
-test('diagnostic: how the production reader sees a native edit in another process', async () => {
+test('the production reader accepts a native edit in another app as replaceable', async () => {
   await reset(0, 0);
   const { execFileSync } = await import('node:child_process');
   const script = fileURLToPath(new URL('./read-focused-editor.ps1', import.meta.url));
-  for (const extra of [[], ['-Proxies']]) {
-    try {
-      console.log(extra.join(' ') || 'default', execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd), ...extra], { encoding: 'utf8' }).trim());
-    } catch (error) { console.log(extra.join(' ') || 'default', 'error', String(error.stderr || error.message).slice(0, 400)); }
-  }
+  const result = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd)], { encoding: 'utf8' }));
+  assert.equal(result.active, true);
+  assert.equal(result.reader, 'value');
+  assert.equal(result.replaceSupported, true);
 });
 
 test('field replacement checks the exact text before replacing everything', async () => {
@@ -115,10 +114,6 @@ test('field replacement checks the exact text before replacing everything', asyn
   const check = await copySelectionInWindow(hwnd).catch(() => ({ runtimeId: '' }));
   assert.ok(check.runtimeId, 'the focused edit control has a UI Automation runtime id');
   await command(`setclip ${b64('Please send the report today.')}`);
-  if (process.env.CLEARWRITE_DIAGNOSE) {
-    const { execFileSync } = await import('node:child_process');
-    console.log(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-Command', `Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; $f=[System.Windows.Automation.AutomationElement]::FocusedElement; 'type=' + $f.Current.ControlType.ProgrammaticName + ' class=' + $f.Current.ClassName + ' fw=' + $f.Current.FrameworkId; $f.GetSupportedPatterns() | % { $_.ProgrammaticName }; $v=$null; 'value=' + $f.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$v); if ($v) { 'ro=' + $v.Current.IsReadOnly + ' val=' + $v.Current.Value }`], { encoding: 'utf8' }));
-  }
   await assert.rejects(replaceFieldInWindow(hwnd, 'Different text', check.runtimeId), /text changed/);
   assert.equal(await fieldText(), ORIGINAL);
   await replaceFieldInWindow(hwnd, ORIGINAL, check.runtimeId);

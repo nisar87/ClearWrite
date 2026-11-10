@@ -83,6 +83,13 @@ public static class ClearWriteInput {
   static INPUT Key(ushort key, uint flags) { var input = new INPUT(); input.type = 1; input.U.ki.wVk = key; input.U.ki.dwFlags = flags; return input; }
 }
 "@
+# Managed UI Automation installs its Win32 proxies (Edit, RichEdit, ...) lazily. Starting from
+# the target window first makes FocusedElement report a native edit as ControlType.Edit with
+# ValuePattern; otherwise it can come back as a bare Pane and Apply is refused.
+function Get-FocusedElement([IntPtr]$window) {
+  try { $null = [System.Windows.Automation.AutomationElement]::FromHandle($window) } catch { }
+  [System.Windows.Automation.AutomationElement]::FocusedElement
+}
 switch ($env:CLEARWRITE_ACTION) {
   'validate' {
     $size = [Runtime.InteropServices.Marshal]::SizeOf([type][ClearWriteInput+INPUT])
@@ -109,7 +116,7 @@ switch ($env:CLEARWRITE_ACTION) {
     Start-Sleep -Milliseconds 120
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
     $runtimeId = ''
-    try { $focused = [System.Windows.Automation.AutomationElement]::FocusedElement; if ($null -ne $focused) { $runtimeId = [string]::Join('.', $focused.GetRuntimeId()) } } catch { }
+    try { $focused = Get-FocusedElement $target; if ($null -ne $focused) { $runtimeId = [string]::Join('.', $focused.GetRuntimeId()) } } catch { }
     $before = [ClearWriteInput]::GetClipboardSequenceNumber()
     [ClearWriteInput]::Chord(0x43)
     $changed = [ClearWriteInput]::WaitForClipboard($before, 900)
@@ -120,7 +127,7 @@ switch ($env:CLEARWRITE_ACTION) {
     $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
     if ($env:CLEARWRITE_RUNTIME_ID) {
-      $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+      $focused = Get-FocusedElement $target
       $runtimeId = if ($null -ne $focused) { [string]::Join('.', $focused.GetRuntimeId()) } else { '' }
       if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
     }
@@ -132,7 +139,7 @@ switch ($env:CLEARWRITE_ACTION) {
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
     Start-Sleep -Milliseconds 180
     if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
-    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+    $focused = Get-FocusedElement $target
     if ($null -eq $focused) { throw 'The original text field is no longer focused. Nothing was replaced.' }
     $runtimeId = [string]::Join('.', $focused.GetRuntimeId())
     if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }

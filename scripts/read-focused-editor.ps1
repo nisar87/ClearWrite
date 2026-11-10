@@ -1,15 +1,11 @@
 # Runs the production editor reader (src/editor-reader.cs) once against a window handle and
 # prints the snapshot metadata as JSON (no field text). Used by scripts/test-input-actions.js.
-param([long]$Window, [switch]$Proxies)
+param([long]$Window)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName Accessibility
-if ($Proxies) {
-  Add-Type -AssemblyName UIAutomationClientSideProviders
-  [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([System.Reflection.AssemblyName]::new([UIAutomationClientsideProviders.UIAutomationClientSideProviders].Assembly.FullName))
-}
 $references = @(
   ([System.Windows.Automation.AutomationElement].Assembly.Location)
   ([System.Windows.Automation.AutomationIdentifier].Assembly.Location)

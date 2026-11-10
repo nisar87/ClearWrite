@@ -1,4 +1,12 @@
 import { hasProofreadableProse, isReadyForLiveProofread } from './live-proofread.js';
+import { hasEdits } from './finding-edits.js';
+
+// Rich editors (TextPattern documents) cannot be replaced as a whole, but individual chosen
+// fixes can be applied in place (see spansForEdits and the helper's replace-spans action).
+// Only managed-UIA readers have a runtime id the helper can match.
+export function supportsSpanApply(snapshot) {
+  return Boolean(snapshot && !snapshot.replaceSupported && snapshot.runtimeId && ['text', 'value'].includes(snapshot.reader));
+}
 
 // Content state for the active writing field. Visibility lives in panel-lifecycle.js.
 //
@@ -242,7 +250,8 @@ export function monitorView(session, { connected = false, provider = 'chatgpt', 
         status: skipped ? 'quiet' : !unchanged || unresolved ? 'suggestion' : 'clean',
         statusLine: awayLine || (skipped ? 'Offline check skipped' : unresolved ? 'Possible mistakes need your review' : unchanged ? 'No corrections found' : 'Suggestion ready to review'),
         canCopy: !unchanged,
-        canApply: !unchanged && base.replaceSupported,
+        canApply: !unchanged && (base.replaceSupported || (supportsSpanApply(session.snapshot) && hasEdits(suggestion.findings))),
+        applyMode: base.replaceSupported ? 'field' : 'spans',
       };
     }
     default:

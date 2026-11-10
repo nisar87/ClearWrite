@@ -156,3 +156,54 @@ export function offsetFindings(findings, delta) {
     ...(Array.isArray(finding.edits) ? { edits: finding.edits.map((edit) => ({ ...edit, start: edit.start + delta, end: edit.end + delta })) } : {}),
   }));
 }
+
+const WORD = /[\p{L}\p{N}_'’]/u;
+const BREAK = /[\r\n]|[\u{10000}-\u{10FFFF}]/u;
+
+// Turns chosen edits into spans for in-place replacement in a rich editor. Each span covers
+// whole words (so an insertion such as a comma has non-empty original text to verify), carries
+// up to `context` characters of same-line text on each side (not overlapping other spans) to
+// locate it unambiguously, and
+// edits inside the same word are merged. Spans are returned in document order.
+export function spansForEdits(text, edits, context = 24) {
+  const source = points(text);
+  const regions = [];
+  for (const edit of [...edits].sort((x, y) => x.start - y.start)) {
+    let start = edit.start;
+    let end = edit.end;
+    while (start > 0 && WORD.test(source[start - 1])) start -= 1;
+    while (end < source.length && WORD.test(source[end])) end += 1;
+    if (start === end) {
+      if (end < source.length && !BREAK.test(source[end])) end += 1;
+      else if (start > 0 && !BREAK.test(source[start - 1])) start -= 1;
+    }
+    const last = regions[regions.length - 1];
+    if (last && start <= last.end) {
+      last.end = Math.max(last.end, end);
+      last.edits.push(edit);
+    } else regions.push({ start, end, edits: [edit] });
+  }
+  // Context never reaches into a neighbouring span: spans are applied last to first, so a
+  // neighbour's text may already have changed when this span is located.
+  return regions.map(({ start, end, edits: inside }, index) => {
+    const floor = index > 0 ? regions[index - 1].end : 0;
+    const ceiling = index + 1 < regions.length ? regions[index + 1].start : source.length;
+    let replacement = '';
+    let cursor = start;
+    for (const edit of inside) {
+      replacement += source.slice(cursor, edit.start).join('') + edit.text;
+      cursor = edit.end;
+    }
+    replacement += source.slice(cursor, end).join('');
+    let from = start;
+    while (from > floor && start - from < context && !BREAK.test(source[from - 1])) from -= 1;
+    let to = end;
+    while (to < ceiling && to - end < context && !BREAK.test(source[to])) to += 1;
+    return {
+      before: source.slice(from, start).join(''),
+      original: source.slice(start, end).join(''),
+      after: source.slice(end, to).join(''),
+      replacement,
+    };
+  }).filter((span) => span.original && span.original !== span.replacement);
+}

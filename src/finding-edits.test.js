@@ -101,3 +101,40 @@ test('splitting never breaks an emoji and falls back to word boundaries', async 
   const unbroken = 'x'.repeat(2500);
   assert.deepEqual(splitForChecking(unbroken, 1000).map((piece) => piece.text.length), [1000, 1000, 500]);
 });
+
+test('in-place spans cover whole words, merge edits in one word, and carry same-line context', async () => {
+  const { spansForEdits } = await import('./finding-edits.js');
+  const text = 'Hello team,\r\nPlease reply soon thanks. Teh end.';
+  const soon = text.indexOf('soon') + 4;
+  const teh = [...text].join('').indexOf('Teh');
+  const spans = spansForEdits(text, [
+    { start: soon, end: soon, text: ',' },
+    { start: teh, end: teh + 3, text: 'The' },
+  ], 10);
+  assert.deepEqual(spans, [
+    { before: 'ase reply ', original: 'soon', after: ' thanks. ', replacement: 'soon,' },
+    { before: ' thanks. ', original: 'Teh', after: ' end.', replacement: 'The' },
+  ]);
+  for (const span of spans) assert.ok(!/[\r\n]/.test(span.before + span.after), 'context never crosses a line break');
+  const merged = spansForEdits('recieve', [{ start: 3, end: 4, text: 'e' }, { start: 4, end: 5, text: 'i' }]);
+  assert.deepEqual(merged, [{ before: '', original: 'recieve', after: '', replacement: 'receive' }]);
+  assert.deepEqual(spansForEdits('same', [{ start: 0, end: 4, text: 'same' }]), [], 'no-op edits are dropped');
+});
+
+test('composing spans gives the same text as composing the edits', async () => {
+  const { spansForEdits } = await import('./finding-edits.js');
+  const text = 'This is a example, please send teh mesage today.';
+  const findings = [
+    finding(8, 9, ['an'], 0),
+    finding(31, 34, ['the'], 0),
+    finding(35, 41, ['message'], 0),
+  ];
+  const expected = composeText(text, findings);
+  let result = text;
+  for (const span of spansForEdits(text, chosenEdits(text, findings)).reverse()) {
+    const needle = span.before + span.original + span.after;
+    assert.equal(result.split(needle).length, 2, 'context is unique');
+    result = result.replace(needle, span.before + span.replacement + span.after);
+  }
+  assert.equal(result, expected);
+});

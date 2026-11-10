@@ -5,7 +5,7 @@ import { createMonitorWatchdog } from './monitor-watchdog.js';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isBrowserAddressField, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace, matchLineEndings, isSafeCorrection } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isRemoteSessionApp, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
-import { AI_REVIEW_TIMEOUT_MS, LIVE_ACTIONS, MANUAL_ACTIONS, REVIEW_DEBOUNCE_MS, createDebouncer, createMonitorSession, createReviewCache, isCurrentRevision, monitorView, transitionMonitorSession } from './monitor-session.js';
+import { AI_REVIEW_TIMEOUT_MS, LIVE_ACTIONS, MANUAL_ACTIONS, REVIEW_DEBOUNCE_MS, createDebouncer, createMonitorSession, createReviewCache, isCurrentRevision, monitorView, supportsSpanApply, transitionMonitorSession } from './monitor-session.js';
 import { createPanelLifecycle, needsTopmostRepair, panelWindowOps, PINNED_TOPMOST_LEVEL, reducePanel } from './panel-lifecycle.js';
 import { PANEL_DEFAULT_HEIGHT, PANEL_DEFAULT_WIDTH, PANEL_MIN_HEIGHT, PANEL_MIN_WIDTH, boundsFromPlacement, displayForRect, migratePanelPreferences, placementFromBounds, resolvePanelBounds } from './panel-position.js';
 import { createShortcutRegistrar } from './shortcut.js';
@@ -17,10 +17,10 @@ import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, stopWindowsInput, warmWindowsInput } from './windows-input.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput } from './windows-input.js';
 import { reviewAiCorrection, rewriteWarning } from './ai-changes.js';
 import { correctByParagraph, createParagraphCache } from './paragraph-review.js';
-import { chooseOption, composeText, hasEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
+import { chooseOption, chosenEdits, composeText, hasEdits, spansForEdits, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || (app.isPackaged
@@ -977,7 +977,40 @@ async function applyMonitorSuggestion() {
   const suggestion = currentMonitorSuggestion();
   if (!suggestion) throw new Error('There is no completed suggestion to apply.');
   if (suggestion.text === monitorSession.text) throw new Error('The suggestion matches your text; nothing to apply.');
+  if (!monitorSession.snapshot?.replaceSupported && supportsSpanApply(monitorSession.snapshot)) { await applyFixesInDocument(); return; }
   await writeToMonitoredField('apply', suggestion.text, monitorSession.text);
+}
+
+// Rich editors: apply only the chosen fixes, each located by its surrounding text and verified
+// by the helper before pasting, so the rest of the document is never replaced.
+async function applyFixesInDocument() {
+  const snapshot = monitorSession.snapshot;
+  const suggestion = monitorSession.suggestion;
+  if (monitorEditedResult?.revision === monitorSession.revision) throw new Error('An edited suggestion can only be copied in this app. Use Copy.');
+  if (!suggestion || !hasEdits(suggestion.findings)) throw new Error('This suggestion can only be copied in this app. Use Copy.');
+  if (pendingWrite) throw new Error('ClearWrite is already updating this field.');
+  const text = monitorSession.text;
+  const spans = spansForEdits(text, chosenEdits(text, suggestion.findings));
+  if (!spans.length) throw new Error('Choose at least one change to apply.');
+  cancelReviewWork();
+  pendingWrite = { kind: 'apply', key: monitorSession.key, before: text, text: composeText(text, suggestion.findings), done: false };
+  publishAssistantView();
+  try {
+    const result = await replaceSpansInWindow({ target: snapshot.target, runtimeId: snapshot.runtimeId, spans });
+    startup(`in-place apply (applied=${result.applied}, total=${result.total})`);
+    if (result.applied !== result.total) {
+      const reason = result.problem ? `${result.problem} ` : '';
+      throw new Error(result.applied
+        ? `Applied ${result.applied} of ${result.total} changes. ${reason}Copy the rest instead.`
+        : `${reason}Nothing was changed. Use Copy instead.`);
+    }
+    completePendingWrite();
+  } catch (error) {
+    if (pendingWrite && !pendingWrite.done) pendingWrite = undefined;
+    throw error;
+  } finally {
+    publishAssistantView();
+  }
 }
 
 async function undoMonitorApply() {

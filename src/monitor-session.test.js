@@ -218,3 +218,17 @@ test('the editing status only promises a check for text that will actually be ch
   assert.match(at('Hi').statusLine, /Keep typing/);
   assert.match(at('i has a eror in this sentense').statusLine, /Will check when you pause/);
 });
+
+test('rich documents offer Apply fixes only for suggestions made of individual edits', async () => {
+  const { supportsSpanApply } = await import('./monitor-session.js');
+  const doc = { replaceSupported: false, reader: 'text', runtimeId: '42.7' };
+  assert.equal(supportsSpanApply(doc), true);
+  assert.equal(supportsSpanApply({ ...doc, reader: 'uia3-value' }), false, 'UIA3 runtime ids cannot be matched by the helper');
+  assert.equal(supportsSpanApply({ ...doc, replaceSupported: true }), false);
+  const edits = [{ original: 'Teh', suggestions: ['The'], edits: [{ start: 0, end: 3, text: 'The' }], choice: 0 }];
+  const withEdits = monitorView(step(createMonitorSession(), { type: 'field', snapshot: field('d', 'Teh doc.', doc), edited: true }, { type: 'suggestion', revision: 1, suggestion: { text: 'The doc.', findings: edits } }));
+  assert.equal(withEdits.canApply, true);
+  assert.equal(withEdits.applyMode, 'spans');
+  const rewrite = monitorView(step(createMonitorSession(), { type: 'field', snapshot: field('d', 'Teh doc.', doc), edited: true }, { type: 'suggestion', revision: 1, suggestion: { text: 'The document.', findings: [] } }));
+  assert.equal(rewrite.canApply, false, 'whole rewrites stay copy-only in documents');
+});

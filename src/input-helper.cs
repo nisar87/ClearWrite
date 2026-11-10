@@ -308,6 +308,66 @@ public static class ClearWriteInputHost {
     return "{\"id\":" + id + ",\"ok\":true}";
   }
 
+  // Replaces individual spans inside a rich editor (TextPattern) without touching the rest of
+  // the document. Each span is "before\u0001original\u0001after\u0001replacement"; spans are
+  // separated by \u0002 and given last-to-first. A span is replaced only when before+original+after
+  // occurs exactly once in the document, the narrowed range reads back as `original`, and copying
+  // the selected range yields `original`. Stops at the first span that cannot be verified.
+  static string ReplaceSpans(long id, IntPtr target, string runtimeId, string payload) {
+    FocusTarget(target, "The original app could not be focused. Nothing was replaced.");
+    var spans = payload.Split('\u0002');
+    int applied = 0;
+    string problem = "";
+    foreach (var raw in spans) {
+      var parts = raw.Split('\u0001');
+      if (parts.Length != 4 || parts[1].Length == 0) { problem = "Invalid change."; break; }
+      string before = parts[0], original = parts[1], after = parts[2], replacement = parts[3];
+      var focused = AutomationElement.FocusedElement;
+      if (focused == null || string.Join(".", focused.GetRuntimeId()) != runtimeId) { problem = "The focused text field changed."; break; }
+      object pattern;
+      if (!focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) { problem = "This editor does not support changing single words. Use Copy instead."; break; }
+      var document = ((TextPattern)pattern).DocumentRange;
+      var needle = before + original + after;
+      var found = document.FindText(needle, false, false);
+      if (found == null) { problem = "The text around a change is no longer the same."; break; }
+      var rest = document.Clone();
+      rest.MoveEndpointByRange(System.Windows.Automation.Text.TextPatternRangeEndpoint.Start, found, System.Windows.Automation.Text.TextPatternRangeEndpoint.End);
+      if (rest.FindText(needle, false, false) != null) { problem = "A change could not be located unambiguously."; break; }
+      if (before.Length > 0 && found.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.Start, System.Windows.Automation.Text.TextUnit.Character, before.Length) != before.Length) { problem = "A change could not be located exactly."; break; }
+      if (after.Length > 0 && found.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End, System.Windows.Automation.Text.TextUnit.Character, -after.Length) != -after.Length) { problem = "A change could not be located exactly."; break; }
+      if (found.GetText(-1) != original) { problem = "A change could not be located exactly."; break; }
+      found.Select();
+      Wait(60);
+      var snapshot = TakeSnapshot();
+      var copiedBefore = GetClipboardSequenceNumber();
+      bool pasted = false;
+      try {
+        Chord(0x43);
+        if (!WaitForClipboard(copiedBefore, 900) || Normalize(ReadText()) != Normalize(original)) { problem = "The selected text did not match the change."; break; }
+        WriteText(replacement);
+        var written = GetClipboardSequenceNumber();
+        if (GetForegroundWindow() != target || FocusedRuntimeId() != runtimeId) { problem = "The original field is no longer active."; break; }
+        Chord(0x56);
+        pasted = true;
+        // Wait until the editor shows the replacement (it has read the clipboard) before the
+        // next span or restoring the user's clipboard; give up waiting after 1.5 s.
+        var expectedNow = before + replacement + after;
+        var started = Environment.TickCount;
+        bool visible = false;
+        while (unchecked(Environment.TickCount - started) < 1500) {
+          Wait(40);
+          try { if (((TextPattern)pattern).DocumentRange.FindText(expectedNow, false, false) != null) { visible = true; break; } } catch (Exception) { }
+        }
+        if (!visible) Wait(300);
+        if (GetClipboardSequenceNumber() == written) { try { Restore(snapshot); } catch (Exception) { } }
+        applied++;
+      } finally {
+        if (!pasted && GetClipboardSequenceNumber() != copiedBefore) { try { Restore(snapshot); } catch (Exception) { } }
+      }
+    }
+    return "{\"id\":" + id + ",\"ok\":true,\"applied\":" + applied + ",\"total\":" + spans.Length + ",\"problem\":\"" + B64(problem) + "\"}";
+  }
+
   static string B64(string value) { return Convert.ToBase64String(Encoding.UTF8.GetBytes(value ?? "")); }
   static string Unb64(string value) { return value == "-" ? "" : Encoding.UTF8.GetString(Convert.FromBase64String(value)); }
 
@@ -329,6 +389,10 @@ public static class ClearWriteInputHost {
       if (action == "replace-selection" || action == "replace-field") {
         if (parts.Length < 6) throw new InvalidOperationException("Invalid request.");
         return Replace(id, action == "replace-field" ? "field" : "selection", new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]), Unb64(parts[5]));
+      }
+      if (action == "replace-spans") {
+        if (parts.Length < 5) throw new InvalidOperationException("Invalid request.");
+        return ReplaceSpans(id, new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]));
       }
       throw new InvalidOperationException("Unknown input action.");
     } catch (Exception error) {

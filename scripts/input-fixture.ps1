@@ -2,6 +2,7 @@
 # Hosts one native EDIT control. Protocol: prints one JSON line {"hwnd":...} when ready, then answers one command per stdin line:
 #   select <start> <length>   select text in the edit control and focus the window
 #   settext <base64>          replace the edit control's text (UTF-8, base64)
+#   selectrich / setrich / richtext   the same for the native RichEdit document control
 #   setclip <base64>          put text on the clipboard
 #   text                      print {"text":"<base64>"} of the edit control
 #   clip                      print {"clip":"<base64>"} of the clipboard text
@@ -27,6 +28,16 @@ public static class FixtureWin {
   [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hWnd);
   public static IntPtr Edit;
+  public static IntPtr Rich;
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadLibrary(string name);
+  // A native RichEdit document control (multi-line rich text, exposes UIA TextPattern).
+  public static void CreateRich(IntPtr parent) {
+    LoadLibrary("msftedit.dll");
+    Rich = CreateWindowEx(0x200, "RICHEDIT50W", "", 0x50A00044, 10, 44, 480, 70, parent, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+  }
+  public static void SetRich(string text) { SetWindowText(Rich, text); }
+  public static string GetRich() { var builder = new System.Text.StringBuilder(GetWindowTextLength(Rich) + 1); GetWindowText(Rich, builder, builder.Capacity); return builder.ToString(); }
+  public static void SelectRich(int start, int length) { SetFocus(Rich); SendMessage(Rich, 0xB1, new IntPtr(start), new IntPtr(start + length)); }
   public static void CreateEdit(IntPtr parent, string text) { Edit = CreateWindowEx(0x200, "EDIT", text, 0x50010080, 10, 10, 480, 24, parent, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero); }
   public static void SetText(string text) { SetWindowText(Edit, text); }
   public static string GetText() { var builder = new System.Text.StringBuilder(GetWindowTextLength(Edit) + 1); GetWindowText(Edit, builder, builder.Capacity); return builder.ToString(); }
@@ -47,13 +58,14 @@ public static class FixtureWin {
 "@
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'ClearWrite input test'
-$form.Width = 520; $form.Height = 160; $form.TopMost = $true
+$form.Width = 520; $form.Height = 180; $form.TopMost = $true
 $form.StartPosition = 'CenterScreen'
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 function Encode([string]$value) { [Convert]::ToBase64String($utf8.GetBytes([string]$value)) }
 function Decode([string]$value) { $utf8.GetString([Convert]::FromBase64String($value)) }
 $form.Add_Shown({
   [FixtureWin]::CreateEdit($form.Handle, 'Please send teh report today.')
+  [FixtureWin]::CreateRich($form.Handle)
   $form.Activate(); [FixtureWin]::Select(0, 0)
   [Console]::Out.WriteLine((@{ hwnd = $form.Handle.ToInt64() } | ConvertTo-Json -Compress))
   [Console]::Out.Flush()
@@ -73,6 +85,13 @@ $form.Add_Shown({
           $form.Activate()
           [FixtureWin]::Select([int]$parts[1], [int]$parts[2])
         }
+        'selectrich' {
+          [FixtureWin]::SetForegroundWindow($form.Handle) | Out-Null
+          $form.Activate()
+          [FixtureWin]::SelectRich([int]$parts[1], [int]$parts[2])
+        }
+        'setrich' { [FixtureWin]::SetRich((Decode $parts[1])) }
+        'richtext' { $reply = (@{ text = (Encode ([FixtureWin]::GetRich())) } | ConvertTo-Json -Compress) }
         'settext' { [FixtureWin]::SetText((Decode $parts[1])) }
         'setclip' { [System.Windows.Forms.Clipboard]::SetText((Decode $parts[1])) }
         'text' { $reply = (@{ text = (Encode ([FixtureWin]::GetText())) } | ConvertTo-Json -Compress) }

@@ -150,7 +150,9 @@ function render(state) {
     const notes = [];
     if (suggestion.note) notes.push(suggestion.note);
     if (suggestion.needsChoice) notes.push(`${suggestion.needsChoice} possible issue${suggestion.needsChoice === 1 ? '' : 's'} need${suggestion.needsChoice === 1 ? 's' : ''} your judgement and ${suggestion.needsChoice === 1 ? 'was' : 'were'} not changed. Pick an option below or ignore it.`);
-    if (changed && !manual && state.replaceSupported === false) notes.push('This app exposes a whole document, so use Copy and paste the part you need.');
+    if (changed && !manual && state.replaceSupported === false) {
+      notes.push(state.canApply ? 'Apply changes only the highlighted words in your document; the rest is left as it is.' : 'This app exposes a whole document, so use Copy and paste the part you need.');
+    }
     if (changed && !manual && state.canApply && suggestion.action && suggestion.action !== 'correct') notes.push('Apply replaces all of the text in this field.');
     if (changed && !manual && suggestion.source === 'ai') notes.push('AI suggestions can be wrong. Review the highlighted changes before applying.');
     if (suggestion.source === 'local') notes.push('On-device English check: it catches common spelling and grammar mistakes, not all of them.');
@@ -251,7 +253,7 @@ function render(state) {
   show('copy-button', Boolean(state.canCopy));
   show('apply-button', Boolean(state.canApply));
   $('copy-button').textContent = state.replyOnly ? 'Copy reply' : 'Copy';
-  $('apply-button').textContent = manual ? 'Replace selection' : 'Apply';
+  $('apply-button').textContent = manual ? 'Replace selection' : state.applyMode === 'spans' ? 'Apply fixes' : 'Apply';
   $('apply-button').disabled = editing && $('suggestion-edit').value === state.text;
 
   $('privacy-line').textContent = state.proofreadingMode !== 'ai'

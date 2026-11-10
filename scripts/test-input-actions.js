@@ -6,7 +6,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, stopWindowsInput, warmWindowsInput } from '../src/windows-input.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput } from '../src/windows-input.js';
+import { spansForEdits } from '../src/finding-edits.js';
 
 const fixturePath = fileURLToPath(new URL('./input-fixture.ps1', import.meta.url));
 const ORIGINAL = 'Please send teh report today.';
@@ -67,10 +68,27 @@ async function reset(selectStart, selectLength) {
   assert.equal(foreground, true, 'The fixture window could not take focus (is the desktop locked or non-interactive?).');
 }
 
-function fieldRuntimeId() {
+function fieldRuntimeId(includeText = false) {
   const script = fileURLToPath(new URL('./read-focused-editor.ps1', import.meta.url));
-  return JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd)], { encoding: 'utf8' }));
+  const result = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', script, '-Window', String(hwnd), ...(includeText ? ['-IncludeText'] : [])], { encoding: 'utf8' }));
+  return { ...result, text: result.text ? unb64(result.text) : '' };
 }
+
+const DOCUMENT = 'Hello team,\r\nPlease send teh mesage today. Thanks for teh help.';
+async function resetRich() {
+  await command(`setrich ${b64(DOCUMENT)}`);
+  await command('selectrich 0 0');
+  await sleep(150);
+  const { foreground } = await command('foreground');
+  assert.equal(foreground, true, 'The fixture window could not take focus.');
+}
+const richText = async () => unb64((await command('richtext')).text);
+const editAt = (text, word, replacement, occurrence = 0) => {
+  let index = -1;
+  for (let count = 0; count <= occurrence; count += 1) index = text.indexOf(word, index + 1);
+  const start = [...text.slice(0, index)].length;
+  return { start, end: start + [...word].length, text: replacement };
+};
 
 test('capture returns the selection and restores the previous clipboard', async () => {
   await reset(0, 6);
@@ -163,4 +181,43 @@ test('warm helper requests are fast (no new PowerShell process per action)', asy
   const elapsed = performance.now() - started;
   console.log(`warm capture: ${Math.round(elapsed)} ms`);
   assert.ok(elapsed < 1500);
+});
+
+test('a rich document is read as copy-only but supports in-place fixes', async () => {
+  await resetRich();
+  const result = fieldRuntimeId(true);
+  assert.equal(result.active, true, JSON.stringify(result));
+  assert.equal(result.replaceSupported, false);
+  assert.ok(['text', 'value'].includes(result.reader), `reader=${result.reader}`);
+  assert.ok(result.runtimeId);
+  assert.match(result.text, /Please send teh mesage today/);
+});
+
+test('in-place fixes change only the chosen words in a rich document', async () => {
+  await resetRich();
+  const { runtimeId, text } = fieldRuntimeId(true);
+  await command(`setclip ${b64('marker')}`);
+  const spans = spansForEdits(text, [editAt(text, 'mesage', 'message'), editAt(text, 'teh', 'the', 1)]);
+  const result = await replaceSpansInWindow({ target: hwnd, runtimeId, spans });
+  assert.deepEqual({ applied: result.applied, total: result.total }, { applied: 2, total: 2 }, result.problem);
+  const after = await richText();
+  assert.match(after, /Please send teh message today\. Thanks for the help\./, 'the first "teh" was not chosen and is unchanged');
+  assert.match(after, /^Hello team,/);
+  await sleep(300);
+  assert.equal(await clipText(), 'marker', 'the clipboard is restored');
+});
+
+test('in-place fixes refuse ambiguous or changed text and change nothing', async () => {
+  await resetRich();
+  const { runtimeId } = fieldRuntimeId();
+  const before = await richText();
+  const ambiguous = await replaceSpansInWindow({ target: hwnd, runtimeId, spans: [{ before: '', original: 'teh', after: '', replacement: 'the' }] });
+  assert.equal(ambiguous.applied, 0);
+  assert.match(ambiguous.problem, /unambiguously/);
+  const missing = await replaceSpansInWindow({ target: hwnd, runtimeId, spans: [{ before: 'send ', original: 'xyz', after: ' today', replacement: 'abc' }] });
+  assert.equal(missing.applied, 0);
+  assert.match(missing.problem, /no longer the same/);
+  const wrongField = await replaceSpansInWindow({ target: hwnd, runtimeId: '42.1', spans: [{ before: 'send ', original: 'teh', after: ' mesage', replacement: 'the' }] });
+  assert.equal(wrongField.applied, 0);
+  assert.equal(await richText(), before);
 });

@@ -113,3 +113,20 @@ export async function replaceFieldInWindow({ target, runtimeId, expected, replac
   if (typeof expected !== 'string' || typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
   await request('replace-field', target, [runtimeId, expected, replacement]);
 }
+
+// Replaces individual spans inside a rich editor, leaving the rest of the document untouched.
+// spans: [{ before, original, after, replacement }] in document order. Returns
+// { applied, total, problem }: spans after the first one that cannot be verified are skipped.
+export async function replaceSpansInWindow({ target, runtimeId, spans }) {
+  if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text field is no longer available.');
+  if (typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
+  if (!Array.isArray(spans) || !spans.length) throw new Error('There are no changes to apply.');
+  const forbidden = /[\u0001\u0002]/;
+  if (spans.some((span) => [span.before, span.original, span.after, span.replacement].some((value) => typeof value !== 'string' || forbidden.test(value)) || !span.original)) {
+    throw new Error('These changes cannot be applied here. Use Copy instead.');
+  }
+  // Last to first, so applying one change never moves the text of the next.
+  const payload = [...spans].reverse().map((span) => [span.before, span.original, span.after, span.replacement].join('\u0001')).join('\u0002');
+  const result = await request('replace-spans', target, [runtimeId, payload]);
+  return { applied: result.applied, total: result.total, problem: unb64(result.problem) };
+}

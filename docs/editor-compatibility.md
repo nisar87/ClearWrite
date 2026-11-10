@@ -27,14 +27,30 @@ Startup logs include `focus monitor reader ready` once compilation finishes. `fo
 ## Limits
 
 - No guarantee of access to every third-party custom editor. Unsupported providers retain the selection-shortcut workflow.
-- New rich, legacy, ancestor-derived and Scintilla paths are copy-only. Do not enable Apply until target, range, content and replacement semantics are independently verified.
+- Legacy, ancestor-derived, UIA3 and Scintilla paths are copy-only. Rich TextPattern documents (and copy-only managed ValuePattern fields) support **Apply fixes**, which replaces only chosen words in place, never the whole document (see "Applying changes" below). Whole rewrites and hand-edited suggestions stay copy-only there.
 - Large ValuePattern/legacy values can only be limited after their provider returns the string; rich TextPattern reads are bounded at the API call.
 - Dynamic DOM replacements can invalidate ranges or runtime IDs. A conservative fresh baseline may miss the first edit rather than reuse another editor's text.
 - Explicit provider editability is still a provider assertion, not a security guarantee. Read-only conversation panes, password fields, navigation, selection, IME composition and rapid app changes require real-app regression testing.
 - No automatic accessibility settings changes, browser debugging connections, browser extensions, OCR, broad conversation scanning, or silent Ctrl+C are used.
 - Set `CLEARWRITE_EDITOR_FALLBACKS=0` before launch to disable new fallback paths and use direct ValuePattern only for troubleshooting.
 
+## Applying changes
+
+All writes go through one long-running helper (`src/input-helper.ps1` + `input-helper.cs`, compiled once at startup) and are user-initiated (Apply, Replace selection, Undo). Every write is verified immediately before pasting:
+
+- **Whole field** (direct Edit/ComboBox): the focused element must have the snapshot's runtime id and exactly the reviewed value. The field is selected through TextPattern when available (classic edit controls ignore Ctrl+A), the selection is copied, and the paste happens only if the copy equals the reviewed text. This fixed a reproduced case where Ctrl+A was ignored and the correction was inserted at the caret, duplicating the text.
+- **Selection** (shortcut workflow): the selection is copied again in the original window and must still equal the checked text, in the same window and focused element. Otherwise nothing is pasted (previously Ctrl+V was sent to whatever had focus).
+- **In-place fixes** (rich documents): each chosen change covers whole words and carries up to 24 characters of same-line context that does not overlap other changes. The context must occur exactly once in the document; the narrowed range must read back as the original word; copying the selected range must confirm it. Changes are applied last to first; the helper waits until the replacement is visible before the next one. It stops at the first change it cannot verify and reports how many were applied.
+
+UI Automation is queried from compiled C#. Called from a PowerShell expression, managed UIA reported a native edit control in another process as a Pane without ValuePattern, so whole-field Apply refused ordinary fields; this was reproduced and fixed on a Windows runner.
+
+The user's clipboard is snapshotted in every copyable format (text, HTML, RTF, images, file lists, application formats; GDI handle formats are re-synthesized by Windows from the DIB) and restored natively, unless something else was copied in the meantime. ClearWrite's temporary clipboard content and its restores carry `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0` and `CanUploadToCloudClipboard=0`, so Windows clipboard history and cloud clipboard do not record them. The copy made by the app being edited (when ClearWrite re-copies a selection to verify it) is written by that app, so clipboard history may still record that copy of the selected text.
+
 ## Verification
+
+CI (`.github/workflows/ci.yml`, `windows-latest`) runs `npm test`, the editor reader fixture (`npm run test:editors`) and the input integration tests (`npm run test:input`) on the runner's interactive desktop. The input tests drive a test-owned window with a native Edit and a native RichEdit control in a separate process: capture, clipboard restore (including copied files), history exclusion, verified selection replace, lost/different selection refusal, whole-field Apply without duplication, in-place fixes in a rich document, and refusal of ambiguous or changed context. These are fixture results, not evidence for specific third-party apps.
+
+
 
 `npm test` compiles the production reader on Windows and exercises its rich-text eligibility policy plus watchdog integration tests. It does not demonstrate compatibility with real WhatsApp, Outlook or Notepad++ versions.
 

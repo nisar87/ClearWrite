@@ -20,9 +20,20 @@ if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
   const off = Object.entries(config).filter(([, value]) => value !== true).map(([name, value]) => `${name}=${value}`);
   console.error(`harper rules: ${Object.keys(config).length} total; not enabled: ${off.join(', ')}`);
 }
+if (process.env.CLEARWRITE_HARPER_REPORT === '1') {
+  console.error(`harper api: ${Object.getOwnPropertyNames(Object.getPrototypeOf(linter)).join(', ')}`);
+  for (const sample of ['the meeting starts at noon.', 'The report are ready.', 'Thank you for you\'re help.', 'The draft is ready.Please review it.']) {
+    const lints = await linter.lint(sample, { language: 'plaintext' });
+    console.error(`harper sample ${JSON.stringify(sample)}: ${lints.map((lint) => `${lint.lint_kind()}:${lint.get_problem_text?.() ?? ''}`).join(' | ') || 'none'}`);
+  }
+}
 if (process.env.CLEARWRITE_HARPER_RULES === 'all') {
   const config = await linter.getLintConfig();
   await linter.setLintConfig(Object.fromEntries(Object.keys(config).map((name) => [name, true])));
+  const after = await linter.getLintConfig();
+  console.error(`harper all-rules: ${Object.values(after).filter((value) => value === true).length}/${Object.keys(after).length} enabled`);
+  const lints = await linter.lint('the meeting starts at noon. I am fine.', { language: 'plaintext' });
+  console.error(`harper all-rules sample: ${lints.map((lint) => lint.lint_kind()).join(', ') || 'none'}`);
 }
 parentPort.postMessage({ type: 'ready' });
 let contextSpeller;
@@ -33,6 +44,20 @@ const englishClues = new Set('a an and are as at be been but can could did do do
 
 function codePointSlice(text, start, end) {
   return [...text].slice(start, end).join('');
+}
+
+const CONTRACTION_ENDINGS = ['t', 's', 're', 've', 'll', 'd', 'm'];
+async function apostropheVariants(word) {
+  if (!/^[A-Za-z]{3,20}$/.test(word)) return [];
+  const variants = [];
+  for (const ending of CONTRACTION_ENDINGS) {
+    if (!word.toLowerCase().endsWith(ending) || word.length - ending.length < 1) continue;
+    // n't contractions put the apostrophe before the t ("dont" -> "don't").
+    const variant = `${word.slice(0, word.length - ending.length)}'${word.slice(word.length - ending.length)}`;
+    const lints = await linter.lint(variant, { language: 'plaintext' });
+    if (!lints.some((lint) => lint.lint_kind() === 'Spelling')) variants.push(variant);
+  }
+  return variants;
 }
 
 function skipped(reason) {
@@ -72,7 +97,13 @@ async function proofread(text) {
     if (protectedRanges.some((range) => span.start < range.end && span.end > range.start)) continue;
     const suggestions = lint.suggestions();
     let candidates = suggestions.map((suggestion) => suggestion.get_replacement_text());
-    let selected = suggestions.length === 1 ? 0 : lint.lint_kind() === 'Spelling'
+    if (lint.lint_kind() === 'Spelling') {
+      // A dropped apostrophe ("dont", "theyre", "youve") is a common typo that Harper's
+      // spelling suggestions do not cover. Offer the contraction when Harper accepts it.
+      const contractions = await apostropheVariants(codePointSlice(text, span.start, span.end));
+      candidates = [...contractions, ...candidates.filter((candidate) => !contractions.includes(candidate))];
+    }
+    let selected = candidates.length === 1 ? 0 : lint.lint_kind() === 'Spelling'
       ? selectSpellingCandidate({ text, start: span.start, end: span.end, candidates }) : -1;
     const spellingEdit = lint.lint_kind() === 'Spelling' || (lint.lint_kind() === 'Typo' && /^[A-Za-z]{3,24}$/.test(codePointSlice(text, span.start, span.end)));
     if (useContext && contextSpeller && spellingEdit) {

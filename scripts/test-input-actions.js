@@ -116,7 +116,7 @@ test('diagnostic variants', async () => {
   const { tmpdir } = await import('node:os');
   const body = (extra) => `$ErrorActionPreference='Stop'; Add-Type -AssemblyName UIAutomationClient; Add-Type -AssemblyName UIAutomationTypes; ${extra} $f=[System.Windows.Automation.AutomationElement]::FocusedElement; $f.Current.ControlType.ProgrammaticName + ' ' + $f.Current.ClassName`;
   const file = `${tmpdir()}\\cw-diag.ps1`;
-  const refs = "$r=@(([System.Windows.Automation.AutomationElement].Assembly.Location),([System.Windows.Automation.AutomationIdentifier].Assembly.Location),([System.Windows.Rect].Assembly.Location),([Accessibility.IAccessible].Assembly.Location)); Add-Type -AssemblyName WindowsBase; Add-Type -AssemblyName Accessibility;";
+  const refs = "Add-Type -AssemblyName WindowsBase; Add-Type -AssemblyName Accessibility; $r=@(([System.Windows.Automation.AutomationElement].Assembly.Location),([System.Windows.Automation.AutomationIdentifier].Assembly.Location),([System.Windows.Rect].Assembly.Location),([Accessibility.IAccessible].Assembly.Location));";
   const reader = fileURLToPath(new URL('../src/editor-reader.cs', import.meta.url));
   const tiny = 'public static class Tiny { public static string Get() { var f = System.Windows.Automation.AutomationElement.FocusedElement; return f.Current.ControlType.ProgrammaticName; } }';
   const variants = {
@@ -127,7 +127,7 @@ test('diagnostic variants', async () => {
   };
   for (const [name, script] of Object.entries(variants)) {
     writeFileSync(file, script);
-    try { console.log('DIAG', name, execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' }).trim().replace(/\s+/g, ' ')); }
+    try { console.log('DIAG', name, execFileSync('powershell.exe', ['-NoProfile', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim().replace(/\s+/g, ' ')); }
     catch (error) { console.log('DIAG', name, 'error', String(error.stderr || error.message).slice(0, 300).replace(/\s+/g, ' ')); }
   }
 });

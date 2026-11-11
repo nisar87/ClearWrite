@@ -69,6 +69,7 @@ jobs:
     timeout-minutes: 45
     env:
       CLEARWRITE_DIST_WITHOUT_CHATGPT: '1'
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -90,11 +91,33 @@ jobs:
           if (-not (Test-Path node_modules/electron/dist/electron.exe)) { node node_modules/electron/install.js }
           if (-not (Test-Path node_modules/electron/dist/electron.exe)) { throw 'Electron binary missing.' }
 
+      # Release dry run: the same version choice as release.yml (nothing is published from CI).
+      - name: Choose the release version (dry run)
+        id: version
+        shell: pwsh
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' > published-tags.txt
+          $version = node scripts/release-version.js published-tags.txt
+          if (-not $version) { throw 'No release version.' }
+          npm version $version --no-git-tag-version --allow-same-version | Out-Null
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "Next release would be $version"
+
       - name: Build installer and ZIP
         run: npm run dist:win
 
       - name: Verify the package
         run: npm run dist:verify
+
+      - name: Check the release files exist (dry run)
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $channel = if ($version.Contains('-')) { 'beta' } else { 'latest' }
+          foreach ($file in @("release/ClearWrite-$version-Setup-x64.exe", "release/ClearWrite-$version-Setup-x64.exe.blockmap", "release/ClearWrite-$version-Windows-x64.zip", "release/$channel.yml", 'release/SHA256SUMS.txt', 'docs/GETTING-STARTED.md')) {
+            if (-not (Test-Path $file)) { throw "Missing release file: $file" }
+          }
+          Write-Output "All release files for $version are present."
 
       - name: Smoke-test the packaged app
         shell: pwsh

@@ -265,10 +265,6 @@ test('replacing a selection that includes a paragraph break keeps the break', as
   assert.equal(firstLine, 'Hello team,');
   await command(`selectrich 0 ${firstLine.length + 1}`);
   await sleep(150);
-  const captured = await captureSelection();
-  console.log(`diagnostic: copied ${JSON.stringify(captured.text)}; field ${JSON.stringify(before.slice(0, 20))}`);
-  await command(`selectrich 0 ${firstLine.length + 1}`);
-  await sleep(150);
   await command(`setclip ${b64('marker')}`);
   await replaceSelectionInWindow({ target: hwnd, expected: 'Hello team,', replacement: 'Hi team,' });
   await sleep(400);

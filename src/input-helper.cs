@@ -275,6 +275,26 @@ public static class ClearWriteInputHost {
     if (breaks.Length == 0 || replacement.EndsWith("\n") || replacement.EndsWith("\r")) return "";
     return breaks;
   }
+  static bool ExcludeTrailingBreaks(string expected) {
+    try {
+      var focused = AutomationElement.FocusedElement;
+      object pattern;
+      if (focused == null || !focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) return false;
+      var selection = ((TextPattern)pattern).GetSelection();
+      if (selection.Length != 1) return false;
+      var range = selection[0];
+      for (int step = 0; step < 4; step++) {
+        var text = range.GetText(-1) ?? "";
+        if (text.Length == 0 || (text[text.Length - 1] != '\r' && text[text.Length - 1] != '\n')) break;
+        if (range.MoveEndpointByUnit(System.Windows.Automation.Text.TextPatternRangeEndpoint.End, System.Windows.Automation.Text.TextUnit.Character, -1) != -1) return false;
+      }
+      if (Normalize(range.GetText(-1)).TrimEnd('\n') != Normalize(expected).TrimEnd('\n') || Normalize(range.GetText(-1)).EndsWith("\n")) return false;
+      range.Select();
+      Wait(60);
+      return true;
+    } catch (Exception) { return false; }
+  }
+
   static string SelectionTail() {
     try {
       var focused = AutomationElement.FocusedElement;
@@ -336,8 +356,13 @@ public static class ClearWriteInputHost {
           ? "ClearWrite could not select exactly this field's text, so nothing was replaced. Use Copy instead."
           : "The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.");
       }
-      var keep = MissingBreaks(copiedText, replacement);
-      if (keep.Length == 0) keep = MissingBreaks(selectedTail, replacement);
+      // A selection that ends with a paragraph break: leave the break in place by shrinking the
+      // selection to the text before it (UI Automation), so the paste can never merge paragraphs.
+      // Editors without that support get the break appended to the pasted text instead.
+      var keep = "";
+      if (MissingBreaks(copiedText, replacement).Length > 0 || selectedTail.Length > 0) {
+        if (!ExcludeTrailingBreaks(expected)) keep = MissingBreaks(copiedText.Length > 0 ? copiedText : selectedTail, replacement);
+      }
       WriteText(replacement + keep);
       var written = GetClipboardSequenceNumber();
       if (GetForegroundWindow() != target) throw new InvalidOperationException("The original app is no longer active. Nothing was replaced.");

@@ -275,6 +275,19 @@ public static class ClearWriteInputHost {
     if (breaks.Length == 0 || replacement.EndsWith("\n") || replacement.EndsWith("\r")) return "";
     return breaks;
   }
+  static string SelectionTail() {
+    try {
+      var focused = AutomationElement.FocusedElement;
+      object pattern;
+      if (focused == null || !focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) return "";
+      var selection = ((TextPattern)pattern).GetSelection();
+      if (selection.Length != 1) return "";
+      var text = selection[0].GetText(-1) ?? "";
+      int end = text.Length;
+      while (end > 0 && (text[end - 1] == '\r' || text[end - 1] == '\n')) end--;
+      return text.Substring(end).Length > 0 ? "x" + text.Substring(end) : "";
+    } catch (Exception) { return ""; }
+  }
   // Word and Outlook can add a paragraph break when copying a selection; ignore trailing breaks.
   static bool SameSelection(string copied, string expected) { return Normalize(copied).TrimEnd('\n') == Normalize(expected).TrimEnd('\n'); }
 
@@ -308,6 +321,9 @@ public static class ClearWriteInputHost {
       if (!SelectAllFocused()) Chord(0x41);
       Wait(60);
     } else runtimeId = FocusedRuntimeId();
+    // Some editors (RichEdit) leave a selected paragraph break off the clipboard; UI Automation
+    // still reports it, so the pasted text can keep it.
+    var selectedTail = mode == "field" ? "" : SelectionTail();
     var snapshot = TakeSnapshot();
     var before = GetClipboardSequenceNumber();
     bool pasted = false;
@@ -320,7 +336,9 @@ public static class ClearWriteInputHost {
           ? "ClearWrite could not select exactly this field's text, so nothing was replaced. Use Copy instead."
           : "The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.");
       }
-      WriteText(replacement + MissingBreaks(copiedText, replacement));
+      var keep = MissingBreaks(copiedText, replacement);
+      if (keep.Length == 0) keep = MissingBreaks(selectedTail, replacement);
+      WriteText(replacement + keep);
       var written = GetClipboardSequenceNumber();
       if (GetForegroundWindow() != target) throw new InvalidOperationException("The original app is no longer active. Nothing was replaced.");
       if (runtimeId.Length > 0 && FocusedRuntimeId() != runtimeId) throw new InvalidOperationException("The focused text field changed. Nothing was replaced.");

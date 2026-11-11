@@ -1,0 +1,101 @@
+name: Release
+
+# Publishes a GitHub Release for every change that reaches main (and on demand). Installed copies
+# of ClearWrite check GitHub Releases and offer the update; users never need to reinstall.
+# The release runs the same checks as CI, then builds, verifies and smoke-tests the installer
+# before anything is published.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CLEARWRITE_DIST_WITHOUT_CHATGPT: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Fetch the on-device grammar model (pinned, checksum-verified)
+        run: npm run model:fetch
+
+      - name: Download the Electron binary
+        shell: pwsh
+        run: |
+          if (-not (Test-Path node_modules/electron/dist/electron.exe)) { node node_modules/electron/install.js }
+          if (-not (Test-Path node_modules/electron/dist/electron.exe)) { throw 'Electron binary missing.' }
+
+      - name: Checks and tests
+        run: |
+          npm run check
+          npm test
+          npm run test:input
+          node scripts/benchmark-offline.js release
+          node scripts/benchmark-gate.js release
+
+      - name: Choose the release version
+        id: version
+        shell: pwsh
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' > published-tags.txt
+          $version = node scripts/release-version.js published-tags.txt
+          if (-not $version) { throw 'No release version.' }
+          npm version $version --no-git-tag-version --allow-same-version | Out-Null
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "Releasing $version"
+
+      - name: Build installer and ZIP
+        run: npm run dist:win
+
+      - name: Verify the package
+        run: npm run dist:verify
+
+      - name: Smoke-test the packaged app
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'clearwrite-smoke'
+          $env:CLEARWRITE_DATA_DIR = $data
+          $process = Start-Process -FilePath 'release/win-unpacked/ClearWrite.exe' -ArgumentList '--distribution-smoke' -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Smoke test timed out.' }
+          $report = Get-Content (Join-Path $data 'distribution-smoke.json') -Raw
+          Write-Output $report
+          if (-not ($report | ConvertFrom-Json).passed) { throw 'Packaged app smoke test failed.' }
+
+      - name: Publish the GitHub Release
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $channel = if ($version.Contains('-')) { 'beta' } else { 'latest' }
+          $files = @(
+            "release/ClearWrite-$version-Setup-x64.exe",
+            "release/ClearWrite-$version-Setup-x64.exe.blockmap",
+            "release/ClearWrite-$version-Windows-x64.zip",
+            "release/$channel.yml",
+            'release/SHA256SUMS.txt',
+            'docs/GETTING-STARTED.md'
+          )
+          foreach ($file in $files) { if (-not (Test-Path $file)) { throw "Missing release file: $file" } }
+          $commit = git rev-parse --short HEAD
+          $notes = "Automatic release of $commit. Installed copies of ClearWrite offer this update in Settings > Updates; download and installation always ask first.`n`nThis build includes offline checking, the on-device grammar model and Gemini. ChatGPT sign-in (the optional DevKit) is not included in automatic builds."
+          $prerelease = if ($version.Contains('-')) { '--prerelease' } else { '' }
+          gh release create "v$version" @files --title "ClearWrite $version" --notes $notes --target $env:GITHUB_SHA --generate-notes $prerelease

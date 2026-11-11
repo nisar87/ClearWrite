@@ -4,7 +4,11 @@ import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { nativeTheme } from 'electron';
 import { proofreadLocally, stopLocalProofreader } from './local-proofread.js';
+import { createWritingStats } from './writing-stats.js';
 import { stopWindowsInput, validateWindowsInput } from './windows-input.js';
 
 // Explicit developer-only launch mode: no monitoring, provider calls, or sign-in.
@@ -19,11 +23,59 @@ export async function runDistributionSmoke({ app, BrowserWindow, safeStorage }, 
       preload: path.join(root, 'preload.cjs'), contextIsolation: true,
       sandbox: true, nodeIntegration: false, spellcheck: false,
     } });
-    for (const page of ['index.html', 'assistant.html']) {
+    const pageErrors = [];
+    window.webContents.on('console-message', (event, ...rest) => {
+      const level = typeof rest[0] === 'number' ? rest[0] : event?.level;
+      const message = typeof rest[1] === 'string' ? rest[1] : event?.message;
+      if (level === 3 || level === 'error') pageErrors.push(String(message));
+    });
+    for (const page of ['index.html', 'assistant.html', 'badge.html', 'card.html']) {
       await window.loadFile(path.resolve(root, '../public', page));
       assert.equal(await window.webContents.executeJavaScript('typeof window.clearWrite.getState'), 'function');
       checks.push(`${page}: loaded with preload bridge`);
     }
+    // The main window with real writing stats: tiles, chart, History, then dark mode.
+    const statsDir = await mkdtemp(path.join(tmpdir(), 'clearwrite-smoke-stats-'));
+    try {
+      const store = createWritingStats(statsDir);
+      await store.load();
+      const text = 'I recieve the file yesterday.';
+      const finding = { kind: 'Spelling', original: 'recieve', edits: [{ start: 2, end: 9, text: 'receive' }], choice: 0, start: 2, end: 9 };
+      store.review('smoke-field', text, [finding]);
+      assert.equal(await store.decide(text, [finding], { app: 'notepad' }), true);
+      const summary = store.summary();
+      assert.equal(summary.today.fixed, 1);
+      await window.loadFile(path.resolve(root, '../public/index.html'));
+      const page = await window.webContents.executeJavaScript(`(() => {
+        renderStats(${JSON.stringify(summary)});
+        showPage('history');
+        const result = {
+          fixed: document.getElementById('tile-fixed').textContent,
+          bars: document.querySelectorAll('#chart .bar-fixed').length,
+          history: document.querySelectorAll('#history-list .history-item').length,
+          historyVisible: !document.getElementById('history-page').classList.contains('hidden'),
+          title: document.getElementById('page-label').textContent,
+        };
+        showPage('settings', 'privacy');
+        result.privacyVisible = !document.querySelector('[data-panel="privacy"]').classList.contains('hidden');
+        return result;
+      })()`);
+      assert.deepEqual(page, { fixed: '1', bars: 1, history: 1, historyVisible: true, title: 'History', privacyVisible: true });
+      checks.push('main window: stats tiles, 30-day chart, History page and settings tabs render from real stats');
+    } finally {
+      await rm(statsDir, { recursive: true, force: true });
+    }
+    const background = () => window.webContents.executeJavaScript('getComputedStyle(document.body).backgroundColor');
+    nativeTheme.themeSource = 'light';
+    const light = await background();
+    nativeTheme.themeSource = 'dark';
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const dark = await background();
+    nativeTheme.themeSource = 'system';
+    assert.notEqual(light, dark, 'the dark theme did not change the window colours');
+    checks.push(`themes: light ${light}, dark ${dark}`);
+    assert.deepEqual(pageErrors, [], 'a ClearWrite page reported a script error');
+    checks.push('pages: no script errors');
     const result = await proofreadLocally('I am not quet sure what to do.');
     assert.ok(result.correctedText.includes('quite'), JSON.stringify(result));
     checks.push('offline worker, WASM and context model: correction passed');

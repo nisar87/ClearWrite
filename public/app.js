@@ -107,6 +107,7 @@ function render(state) {
   }
   select.disabled = !state.models.length;
   renderProofreading(state, { isGemini, connected });
+  renderStats(state.stats);
   showNotice(state.notice);
   showNotice(state.notice, true);
 }
@@ -166,8 +167,6 @@ function renderProofreading(state, { isGemini, connected }) {
   $('mode-note').textContent = state.modeNotice
     || (!offline && !connected ? `${providerLabel} is not set up yet, so text is checked on this device for now. Set it up in Settings › AI.` : '');
   $('scope-wrap').classList.toggle('hidden', offline);
-  $('tile-mode').textContent = offline ? 'This PC' : providerLabel;
-  $('tile-mode-detail').textContent = offline ? 'Nothing is sent anywhere' : connected ? 'AI-assisted, after a pause' : `${providerLabel} not set up yet`;
   if (offline) {
     $('status-dot').classList.add('on');
     $('status-label').textContent = 'On this PC only';
@@ -218,7 +217,6 @@ function renderProofreading(state, { isGemini, connected }) {
     return item;
   }));
   renderLearning(state);
-  $('tile-words').textContent = (state.dictionaryWords || []).length.toLocaleString();
   $('dictionary-location').textContent = `${(state.dictionaryWords || []).length.toLocaleString()} word${(state.dictionaryWords || []).length === 1 ? '' : 's'}. Stored only on this device${state.dictionaryLocation ? ` (${state.dictionaryLocation})` : ''}; never uploaded or written to logs.`;
 }
 
@@ -243,7 +241,7 @@ function renderLearning(state) {
     return item;
   }));
   $('learning-clear').disabled = !patterns.length;
-  $('tile-learned').textContent = patterns.filter((pattern) => pattern.trusted).length.toLocaleString();
+
   $('learning-location').textContent = `${patterns.length.toLocaleString()} learned change${patterns.length === 1 ? '' : 's'}. Stored only on this device; never uploaded or written to logs.`;
 }
 
@@ -295,6 +293,7 @@ $('dictionary-input').addEventListener('keydown', (event) => { if (event.key ===
 
 const PAGES = {
   live: { title: 'Home', subtitle: 'Spelling and grammar help in every app you write in.' },
+  history: { title: 'History', subtitle: 'Corrections you made in the last 90 days, kept only on this PC.' },
   settings: { title: 'Settings', subtitle: 'Suggestions, writing, privacy, AI and updates.' },
 };
 function showTab(name) {
@@ -313,6 +312,7 @@ function showPage(page, tab) {
   if (tab) showTab(tab);
 }
 document.querySelectorAll('[data-page]').forEach((button) => button.addEventListener('click', () => showPage(button.dataset.page)));
+document.querySelectorAll('[data-goto]').forEach((button) => button.addEventListener('click', () => showPage(button.dataset.goto)));
 document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
 document.querySelector('.tabs').addEventListener('keydown', (event) => {
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
@@ -452,3 +452,238 @@ if (api) {
 } else {
   showNotice('The desktop connection did not load. Restart ClearWrite before connecting.');
 }
+
+// ---------------------------------------------------------------------------
+// Writing stats (Home) and correction history.
+// ---------------------------------------------------------------------------
+const SVG = 'http://www.w3.org/2000/svg';
+let lastStats = null;
+
+function svg(tag, attributes = {}, parent) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+  parent?.append(node);
+  return node;
+}
+
+function dayLabel(key, style = 'short') {
+  const [year, month, date] = key.split('-').map(Number);
+  const value = new Date(year, month - 1, date);
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (style === 'long') {
+    if (value.toDateString() === today.toDateString()) return 'Today';
+    if (value.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return value.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+  return value.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+function niceMax(value) {
+  if (value <= 4) return 4;
+  const step = 10 ** Math.floor(Math.log10(value));
+  for (const factor of [1, 2, 2.5, 5, 10]) if (factor * step >= value) return factor * step;
+  return 10 * step;
+}
+
+function renderChart(days) {
+  const host = $('chart');
+  const width = Math.max(320, host.clientWidth || 800);
+  const height = 190;
+  const left = 34;
+  const right = 8;
+  const top = 10;
+  const bottom = 24;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const max = niceMax(Math.max(1, ...days.map((day) => Math.max(day.found, day.fixed))));
+  const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, width, height, class: 'chart-svg' });
+  for (const step of [0, 0.5, 1]) {
+    const y = top + plotHeight - step * plotHeight;
+    svg('line', { x1: left, x2: width - right, y1: y, y2: y, class: step === 0 ? 'axis' : 'grid' }, chart);
+    svg('text', { x: left - 8, y: y + 4, class: 'tick', 'text-anchor': 'end' }, chart).textContent = Math.round(step * max).toLocaleString();
+  }
+  const slot = plotWidth / days.length;
+  const bar = Math.max(2, Math.min(9, slot / 2 - 2));
+  days.forEach((day, index) => {
+    const x = left + index * slot + slot / 2;
+    const group = svg('g', { class: 'day' }, chart);
+    svg('title', {}, group).textContent = `${dayLabel(day.day, 'long')}: ${day.found} found, ${day.fixed} fixed, ${day.words.toLocaleString()} words checked`;
+    svg('rect', { x: left + index * slot, y: top, width: slot, height: plotHeight, class: 'hit' }, group);
+    const foundHeight = (day.found / max) * plotHeight;
+    const fixedHeight = (day.fixed / max) * plotHeight;
+    if (day.found) svg('rect', { x: x - bar - 1, y: top + plotHeight - foundHeight, width: bar, height: foundHeight, rx: Math.min(3, bar / 2), class: 'bar-found' }, group);
+    if (day.fixed) svg('rect', { x: x + 1, y: top + plotHeight - fixedHeight, width: bar, height: fixedHeight, rx: Math.min(3, bar / 2), class: 'bar-fixed' }, group);
+    if (index % 7 === days.length % 7 - 1 || index === days.length - 1) {
+      svg('text', { x, y: height - 6, class: 'tick', 'text-anchor': index === days.length - 1 ? 'end' : 'middle' }, chart).textContent = index === days.length - 1 ? 'Today' : dayLabel(day.day);
+    }
+  });
+  host.replaceChildren(chart);
+}
+
+function changeItem(entry, { actions = false } = {}) {
+  const item = document.createElement(actions ? 'div' : 'li');
+  item.className = actions ? 'history-item' : 'change-item';
+  const text = document.createElement('div');
+  text.className = 'change-text';
+  const lead = document.createElement('span'); lead.className = 'context'; lead.textContent = entry.lead;
+  const from = document.createElement('del'); from.textContent = entry.from;
+  const to = document.createElement('ins'); to.textContent = entry.to;
+  const tail = document.createElement('span'); tail.className = 'context'; tail.textContent = entry.tail;
+  text.append(lead, from, to, tail);
+  const meta = document.createElement('div');
+  meta.className = 'change-meta';
+  const kind = document.createElement('span');
+  kind.className = `kind kind-${(entry.kind || 'correction').toLowerCase()}`;
+  kind.textContent = entry.kind || 'Correction';
+  const when = document.createElement('span');
+  when.textContent = [new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), entry.app].filter(Boolean).join(' · ');
+  meta.append(kind, when);
+  const body = document.createElement('div');
+  body.className = 'change-body';
+  body.append(text, meta);
+  item.append(body);
+  if (actions) {
+    const tools = document.createElement('div');
+    tools.className = 'row-actions';
+    const copy = document.createElement('button');
+    copy.className = 'text-button';
+    copy.type = 'button';
+    copy.textContent = 'Copy original';
+    copy.title = 'Copies the text as it was before this fix, to paste it back';
+    copy.addEventListener('click', async () => {
+      try { await requireApi('copyHistoryEntry')(entry.id, 'before'); $('history-notice').textContent = 'Original text copied. Paste it in your app to undo the fix.'; }
+      catch (error) { $('history-notice').textContent = error.message; }
+    });
+    const remove = document.createElement('button');
+    remove.className = 'icon-button small';
+    remove.type = 'button';
+    remove.title = 'Remove from history';
+    remove.setAttribute('aria-label', `Remove ${entry.from} to ${entry.to} from history`);
+    remove.innerHTML = '<svg class="icon"><use href="#i-trash"/></svg>';
+    remove.addEventListener('click', async () => {
+      try { await requireApi('removeHistoryEntry')(entry.id); }
+      catch (error) { $('history-notice').textContent = error.message; }
+    });
+    tools.append(copy, remove);
+    item.append(tools);
+  }
+  return item;
+}
+
+function renderHistory(stats) {
+  const query = $('history-search').value.trim().toLocaleLowerCase();
+  const all = stats?.history || [];
+  const entries = query ? all.filter((entry) => `${entry.lead}${entry.from} ${entry.to}${entry.tail} ${entry.app} ${entry.kind}`.toLocaleLowerCase().includes(query)) : all;
+  const groups = new Map();
+  for (const entry of entries) {
+    const date = new Date(entry.at);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  const blocks = [...groups].map(([key, items]) => {
+    const section = document.createElement('section');
+    section.className = 'history-day';
+    const heading = document.createElement('h3');
+    heading.textContent = `${dayLabel(key, 'long')} · ${items.length} fix${items.length === 1 ? '' : 'es'}`;
+    const list = document.createElement('div');
+    list.className = 'card history-card';
+    list.append(...items.map((entry) => changeItem(entry, { actions: true })));
+    section.append(heading, list);
+    return section;
+  });
+  $('history-list').replaceChildren(...blocks);
+  const enabled = stats?.historyEnabled !== false;
+  $('history-toggle').checked = enabled;
+  $('history-clear').disabled = !all.length;
+  const total = Math.max(stats?.historyCount || 0, all.length);
+  $('history-count').textContent = !all.length ? '' : query ? `${entries.length} of ${all.length} shown` : total > all.length ? `Latest ${all.length} of ${total.toLocaleString()}` : `${total.toLocaleString()} correction${total === 1 ? '' : 's'}`;
+  $('history-empty').classList.toggle('hidden', entries.length > 0);
+  $('history-empty-title').textContent = !enabled ? 'History is off' : query && all.length ? 'No matching corrections' : 'No corrections yet';
+  $('history-empty-detail').textContent = !enabled
+    ? 'Fixes are still counted on Home, but no text is kept. Turn on “Keep history” to list your corrections here.'
+    : query && all.length ? 'Try a different word.' : 'When you apply or copy a fix, it is listed here with a few words around it, so you can check what changed. History stays on this PC and is deleted after 90 days.';
+  const count = $('nav-history-count');
+  const today = stats?.today?.fixed || 0;
+  count.textContent = today > 99 ? '99+' : String(today);
+  count.classList.toggle('hidden', !today);
+  count.title = `${today} fixed today`;
+}
+
+let lastStatsKey = '';
+function renderStats(stats) {
+  if (!stats) return;
+  // The window state is republished often (monitor status); redraw only when stats changed.
+  const key = JSON.stringify(stats);
+  if (key === lastStatsKey) return;
+  lastStatsKey = key;
+  lastStats = stats;
+  const { today, month, days } = stats;
+  $('tile-fixed').textContent = today.fixed.toLocaleString();
+  $('tile-fixed-detail').textContent = today.found ? `${today.found.toLocaleString()} mistake${today.found === 1 ? '' : 's'} found` : 'No mistakes found yet';
+  $('tile-words').textContent = today.words.toLocaleString();
+  $('tile-words-detail').textContent = month.words ? `${month.words.toLocaleString()} in the last 30 days` : 'In every app you write in';
+  $('tile-accept').textContent = month.acceptRate === null ? '–' : `${month.acceptRate}%`;
+  $('tile-accept-detail').textContent = month.acceptRate === null ? 'Last 30 days' : `${month.fixed.toLocaleString()} fixed, ${month.dismissed.toLocaleString()} dismissed · 30 days`;
+  $('chart-summary').textContent = month.found || month.fixed
+    ? `${month.found.toLocaleString()} found and ${month.fixed.toLocaleString()} fixed in ${month.words.toLocaleString()} words.`
+    : 'Mistakes found and fixed each day. Start writing and this fills in.';
+  $('chart').setAttribute('aria-label', `Last 30 days: ${month.found} mistakes found, ${month.fixed} fixed`);
+  renderChart(days);
+  $('chart-table-body').replaceChildren(...days.slice().reverse().filter((day) => day.words || day.found || day.fixed || day.dismissed).map((day) => {
+    const row = document.createElement('tr');
+    for (const value of [dayLabel(day.day, 'long'), day.words.toLocaleString(), day.found, day.fixed, day.dismissed]) {
+      const cell = document.createElement('td');
+      cell.textContent = String(value);
+      row.append(cell);
+    }
+    return row;
+  }));
+  const recent = (stats.history || []).slice(0, 4);
+  $('recent-list').replaceChildren(...recent.map((entry) => changeItem(entry)));
+  $('recent-empty').classList.toggle('hidden', recent.length > 0);
+  $('recent-empty').textContent = stats.historyEnabled === false ? 'History is off. Turn it on from the History page.' : 'Fixes you apply or copy appear here.';
+  $('top-list').replaceChildren(...(stats.top || []).map((item) => {
+    const row = document.createElement('li');
+    const change = document.createElement('span');
+    change.className = 'change-text';
+    const from = document.createElement('del'); from.textContent = item.from;
+    const to = document.createElement('ins'); to.textContent = item.to;
+    change.append(from, to);
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = `${item.count}×`;
+    row.append(change, count);
+    return row;
+  }));
+  $('top-empty').classList.toggle('hidden', (stats.top || []).length > 0);
+  renderHistory(stats);
+}
+
+let chartResize;
+window.addEventListener('resize', () => {
+  clearTimeout(chartResize);
+  chartResize = setTimeout(() => { if (lastStats) renderChart(lastStats.days); }, 120);
+});
+document.querySelectorAll('[data-page="live"]').forEach((button) => button.addEventListener('click', () => { if (lastStats) requestAnimationFrame(() => renderChart(lastStats.days)); }));
+$('history-search').addEventListener('input', () => renderHistory(lastStats));
+$('history-toggle').addEventListener('change', async () => {
+  const enabled = $('history-toggle').checked;
+  if (!enabled && (lastStats?.history || []).length && !confirm('Turn off history? The corrections kept so far will be deleted. Your counts on Home are kept.')) {
+    $('history-toggle').checked = true;
+    return;
+  }
+  try { await requireApi('setHistoryEnabled')(enabled); $('history-notice').textContent = enabled ? 'History is on.' : 'History is off and was cleared.'; }
+  catch (error) { $('history-notice').textContent = error.message; }
+});
+$('history-clear').addEventListener('click', async () => {
+  if (!confirm('Delete every correction in your history? Your counts on Home are kept.')) return;
+  try { await requireApi('clearHistory')(); $('history-notice').textContent = 'History cleared.'; }
+  catch (error) { $('history-notice').textContent = error.message; }
+});
+$('stats-reset').addEventListener('click', async () => {
+  if (!confirm('Reset all writing stats (words checked, mistakes found and fixed)? History is kept unless you clear it.')) return;
+  try { await requireApi('resetStats')(); showNotice('Writing stats reset.', true); }
+  catch (error) { showNotice(error.message, true); }
+});

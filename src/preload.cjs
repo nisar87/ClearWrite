@@ -56,7 +56,26 @@ contextBridge.exposeInMainWorld('clearWrite', {
     ipcRenderer.on('live:delta', listener);
     return () => ipcRenderer.removeListener('live:delta', listener);
   },
-  underlineHover: (active) => ipcRenderer.invoke('underlines:hover', active),
+  underlineHover: (index) => ipcRenderer.invoke('underlines:hover', index),
+  badgeClick: () => ipcRenderer.invoke('badge:click'),
+  cardApply: (index, option) => ipcRenderer.invoke('card:apply', index, option),
+  cardIgnore: (index) => ipcRenderer.invoke('card:ignore', index),
+  cardAddWord: (word) => ipcRenderer.invoke('card:add-word', word),
+  cardOpenPanel: (index) => ipcRenderer.invoke('card:open-panel', index),
+  cardClose: () => ipcRenderer.invoke('card:close'),
+  cardHover: (inside) => ipcRenderer.invoke('card:hover', inside),
+  cardResize: (height) => ipcRenderer.invoke('card:resize', height),
+  setSuggestionStyle: (style) => ipcRenderer.invoke('app:set-suggestion-style', style),
+  onBadge: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('badge:state', listener);
+    return () => ipcRenderer.removeListener('badge:state', listener);
+  },
+  onCard: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('card:state', listener);
+    return () => ipcRenderer.removeListener('card:state', listener);
+  },
   openUnderline: (index) => ipcRenderer.invoke('underlines:open', index),
   setShowUnderlines: (enabled) => ipcRenderer.invoke('app:set-underlines', enabled),
   onUnderlines: (callback) => {

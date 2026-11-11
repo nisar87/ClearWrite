@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self';">
+  <title>ClearWrite suggestion</title>
+  <link rel="stylesheet" href="popups.css">
+</head>
+<body class="card-body">
+  <section id="card" class="card" aria-live="polite">
+    <header><span id="card-kind" class="card-kind"></span><button id="card-close" class="card-close" type="button" aria-label="Close" title="Close">×</button></header>
+    <p id="card-message" class="card-message"></p>
+    <div class="card-change"><s id="card-original"></s></div>
+    <div id="card-options" class="card-options"></div>
+    <footer>
+      <button id="card-ignore" class="card-link" type="button">Dismiss</button>
+      <button id="card-add" class="card-link" type="button">Add to dictionary</button>
+      <button id="card-all" class="card-link card-all" type="button">See all in ClearWrite</button>
+    </footer>
+    <p id="card-error" class="card-error" role="alert"></p>
+  </section>
+  <script src="card.js"></script>
+</body>
+</html>

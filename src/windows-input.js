@@ -43,7 +43,12 @@ function startHelper() {
     state.pending.delete(message.id);
     clearTimeout(request.timer);
     if (message.ok) request.resolve(message);
-    else request.reject(new Error(unb64(message.error) || 'The Windows input action failed.'));
+    else {
+      const error = new Error(unb64(message.error) || 'The Windows input action failed.');
+      // Diagnostic counts only (no text): which selection method worked, lengths.
+      error.detail = unb64(message.detail);
+      request.reject(error);
+    }
   });
   const fail = (error) => {
     if (helper === state) helper = undefined;
@@ -111,7 +116,8 @@ export async function replaceSelectionInWindow({ target, expected, replacement }
 export async function replaceFieldInWindow({ target, runtimeId, expected, replacement }) {
   if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text field is no longer available.');
   if (typeof expected !== 'string' || typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
-  await request('replace-field', target, [runtimeId, expected, replacement]);
+  const result = await request('replace-field', target, [runtimeId, expected, replacement]);
+  return { detail: unb64(result.detail) };
 }
 
 // Replaces individual spans inside a rich editor, leaving the rest of the document untouched.

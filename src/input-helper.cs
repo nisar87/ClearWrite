@@ -308,8 +308,98 @@ public static class ClearWriteInputHost {
       return text.Substring(end).Length > 0 ? "x" + text.Substring(end) : "";
     } catch (Exception) { return ""; }
   }
+  // Text as an app may hand it back through the clipboard: line endings, non-breaking and other
+  // special spaces, zero-width characters and runs of whitespace are not significant.
+  static string Loose(string value) {
+    var text = Normalize(value).Replace('\u00A0', ' ').Replace('\u202F', ' ').Replace('\u2007', ' ').Replace("\u200B", "").Replace("\uFEFF", "");
+    return System.Text.RegularExpressions.Regex.Replace(text, "\\s+", " ").Trim();
+  }
   // Word and Outlook can add a paragraph break when copying a selection; ignore trailing breaks.
-  static bool SameSelection(string copied, string expected) { return Normalize(copied).TrimEnd('\n') == Normalize(expected).TrimEnd('\n'); }
+  static bool SameSelection(string copied, string expected) {
+    return Normalize(copied).TrimEnd('\n') == Normalize(expected).TrimEnd('\n') || (Loose(copied).Length > 0 && Loose(copied) == Loose(expected));
+  }
+
+  // 0 = the app copied nothing, 1 = the copy matches `expected`, 2 = it copied something else.
+  static int CopyMatches(string expected, out int copiedLength) {
+    var before = GetClipboardSequenceNumber();
+    Chord(0x43);
+    copiedLength = 0;
+    if (!WaitForClipboard(before, 900)) return 0;
+    var copied = ReadText();
+    copiedLength = copied.Length;
+    return SameSelection(copied, expected) ? 1 : 2;
+  }
+
+  static string FieldValue(string runtimeId) {
+    try {
+      var editor = FindEditor(runtimeId) ?? AutomationElement.FocusedElement;
+      object pattern;
+      if (editor != null && editor.TryGetCurrentPattern(ValuePattern.Pattern, out pattern)) return ((ValuePattern)pattern).Current.Value ?? "";
+    } catch (Exception) { }
+    return null;
+  }
+
+  // Replaces the whole verified field. The selection is made with Ctrl+A (what most apps expect)
+  // or, when that copies something else or nothing, through UI Automation. A copy that matches the
+  // field's text confirms the selection. When the app copies nothing at all, the paste goes ahead
+  // and is checked instead. In every case the field is read back after pasting: if it does not hold
+  // exactly the corrected text, the paste is undone (Ctrl+Z) and the user is told.
+  static string ReplaceField(long id, IntPtr target, string runtimeId, string expected, string replacement) {
+    FocusTarget(target, "The original app could not be focused. Nothing was replaced.");
+    var problem = CheckFocusedField(runtimeId, expected);
+    if (problem.Length > 0) throw new InvalidOperationException(problem);
+    var snapshot = TakeSnapshot();
+    var original = GetClipboardSequenceNumber();
+    bool pasted = false;
+    string detail;
+    try {
+      int lengthA, lengthB = 0;
+      Chord(0x41);
+      Wait(80);
+      int first = CopyMatches(expected, out lengthA);
+      int second = first;
+      if (first != 1 && SelectAllFocused()) { Wait(80); second = CopyMatches(expected, out lengthB); }
+      detail = "selectAll=" + first + "/" + second + " copied=" + lengthA + "/" + lengthB + " expected=" + expected.Length;
+      if (first == 2 && second == 2) {
+        throw new FieldException("ClearWrite could not select exactly this field's text, so nothing was replaced. Use Copy instead.", detail);
+      }
+      WriteText(replacement);
+      var written = GetClipboardSequenceNumber();
+      if (GetForegroundWindow() != target) throw new FieldException("The original app is no longer active. Nothing was replaced.", detail);
+      if (FindEditor(runtimeId) == null) throw new FieldException("The focused text field changed. Nothing was replaced.", detail);
+      Chord(0x56);
+      pasted = true;
+      pendingSnapshot = snapshot;
+      pendingSequence = written;
+      pendingDue = DateTime.UtcNow.AddMilliseconds(1200);
+      // Read the field back.
+      string value = null;
+      var started = Environment.TickCount;
+      while (unchecked(Environment.TickCount - started) < 1500) {
+        Wait(60);
+        value = FieldValue(runtimeId);
+        if (value != null && Loose(value) == Loose(replacement)) return "{\"id\":" + id + ",\"ok\":true,\"detail\":\"" + B64(detail) + "\"}";
+      }
+      detail += " readBack=" + (value == null ? "none" : value.Length.ToString());
+      if (value == null) return "{\"id\":" + id + ",\"ok\":true,\"detail\":\"" + B64(detail + " unverified") + "\"}";
+      if (Loose(value) == Loose(expected)) throw new FieldException("The app did not accept the change. Nothing was replaced. Use Copy instead.", detail);
+      // Something else happened (for example the text was inserted instead of replacing): undo it.
+      Chord(0x5A);
+      Wait(200);
+      var restored = FieldValue(runtimeId);
+      detail += " undo=" + (restored != null && Loose(restored) == Loose(expected) ? "ok" : "failed");
+      throw new FieldException(restored != null && Loose(restored) == Loose(expected)
+        ? "The change did not land correctly in this app, so ClearWrite undid it. Use Copy instead."
+        : "The change did not land correctly in this app. Press Ctrl+Z in the app to undo it, then use Copy.", detail);
+    } finally {
+      if (!pasted && GetClipboardSequenceNumber() != original) { try { Restore(snapshot); } catch (Exception) { } }
+    }
+  }
+
+  class FieldException : Exception {
+    public readonly string Detail;
+    public FieldException(string message, string detail) : base(message) { Detail = detail; }
+  }
 
   static string Capture(long id) {
     try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
@@ -504,9 +594,13 @@ public static class ClearWriteInputHost {
         return "{\"id\":" + id + ",\"ok\":true}";
       }
       if (action == "capture") return Capture(id);
-      if (action == "replace-selection" || action == "replace-field") {
+      if (action == "replace-field") {
         if (parts.Length < 6) throw new InvalidOperationException("Invalid request.");
-        return Replace(id, action == "replace-field" ? "field" : "selection", new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]), Unb64(parts[5]));
+        return ReplaceField(id, new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]), Unb64(parts[5]));
+      }
+      if (action == "replace-selection") {
+        if (parts.Length < 6) throw new InvalidOperationException("Invalid request.");
+        return Replace(id, "selection", new IntPtr(target), Unb64(parts[3]), Unb64(parts[4]), Unb64(parts[5]));
       }
       if (action == "word-bounds") {
         if (parts.Length < 5) throw new InvalidOperationException("Invalid request.");
@@ -518,7 +612,8 @@ public static class ClearWriteInputHost {
       }
       throw new InvalidOperationException("Unknown input action.");
     } catch (Exception error) {
-      return "{\"id\":" + id + ",\"ok\":false,\"error\":\"" + B64(error.Message) + "\"}";
+      var detail = error is FieldException ? ((FieldException)error).Detail : "";
+      return "{\"id\":" + id + ",\"ok\":false,\"error\":\"" + B64(error.Message) + "\",\"detail\":\"" + B64(detail) + "\"}";
     }
   }
 

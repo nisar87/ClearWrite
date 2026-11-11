@@ -1,33 +1,33 @@
 /* Inline suggestion UI: the corner widget and the suggestion card. */
-html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; font: 13px/1.4 "Segoe UI", system-ui, sans-serif; color: #24302d; user-select: none; }
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; font: 13px/1.4 var(--font-ui); color: var(--text); user-select: none; }
 .badge-body { display: grid; place-items: center; width: 100vw; height: 100vh; }
-.badge { width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; font: 650 12px/1 "Segoe UI", system-ui, sans-serif; color: #fff; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.badge { width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; font: 650 12px/1 var(--font-ui); color: #fff; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 .badge.issues { background: #d1453b; }
-.badge.clear { background: #2f8a66; }
+.badge.clear { background: var(--accent); }
 .badge.error { background: #b7791f; }
-.badge.checking { background: #fff; border: 2px solid #2f8a66; border-top-color: transparent; width: 20px; height: 20px; animation: spin 0.9s linear infinite; box-shadow: none; }
-.badge:focus-visible { outline: 2px solid #2f6fd1; outline-offset: 2px; }
+.badge.checking { background: var(--surface); border: 2px solid var(--accent); border-top-color: transparent; width: 20px; height: 20px; animation: spin 0.9s linear infinite; box-shadow: none; }
+.badge:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .badge.checking { animation: none; border-top-color: #2f8a66; } }
+@media (prefers-reduced-motion: reduce) { .badge.checking { animation: none; border-top-color: var(--accent); } }
 .card-body { padding: 0; }
-.card { box-sizing: border-box; width: 100%; padding: 10px 12px 8px; background: #fff; border: 1px solid #d6dcda; border-radius: 8px; box-shadow: 0 6px 18px rgba(20, 30, 28, .18); }
+.card { box-sizing: border-box; width: 100%; padding: 10px 12px 8px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow-overlay); }
 .card header { display: flex; align-items: center; justify-content: space-between; }
 .card-kind { font-size: 11px; font-weight: 650; letter-spacing: .02em; text-transform: uppercase; }
-.card-kind.spelling { color: #b4372e; }
-.card-kind.grammar { color: #2f6fd1; }
-.card-kind.learned { color: #2f8a66; }
-.card-close { border: 0; background: none; font-size: 16px; line-height: 1; color: #7b8582; cursor: pointer; padding: 0 2px; }
-.card-message { margin: 4px 0 6px; color: #52605c; font-size: 12px; }
+.card-kind.spelling { color: var(--danger); }
+.card-kind.grammar { color: var(--info); }
+.card-kind.learned { color: var(--accent); }
+.card-close { border: 0; background: none; font-size: 16px; line-height: 1; color: var(--soft); cursor: pointer; padding: 0 2px; }
+.card-message { margin: 4px 0 6px; color: var(--muted); font-size: 12px; }
 .card-message:empty { display: none; }
-.card-change { margin-bottom: 6px; color: #8a9491; font-size: 12px; }
+.card-change { margin-bottom: 6px; color: var(--soft); font-size: 12px; }
 .card-options { display: flex; flex-wrap: wrap; gap: 6px; }
-.card-option { min-height: 28px; padding: 3px 12px; border: 0; border-radius: 6px; background: #2f8a66; color: #fff; font: 600 13px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
-.card-option:hover:not(:disabled) { background: #257556; }
+.card-option { min-height: 28px; padding: 3px 12px; border: 0; border-radius: 6px; background: var(--accent); color: var(--on-accent); font: 600 13px var(--font-ui); cursor: pointer; }
+.card-option:hover:not(:disabled) { background: var(--accent-strong); }
 .card-option:disabled { opacity: .6; }
-.card footer { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; padding-top: 6px; border-top: 1px solid #eef1f0; }
-.card-link { border: 0; background: none; padding: 0; color: #52605c; font: 12px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
-.card-link:hover { color: #24302d; text-decoration: underline; }
-.card-all { margin-left: auto; color: #2f6fd1; }
-.card-error { margin: 6px 0 0; color: #b4372e; font-size: 12px; }
+.card footer { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+.card-link { border: 0; background: none; padding: 0; color: var(--muted); font: 12px var(--font-ui); cursor: pointer; }
+.card-link:hover { color: var(--text); text-decoration: underline; }
+.card-all { margin-left: auto; color: var(--accent-strong); font-weight: 600; }
+.card-error { margin: 6px 0 0; color: var(--danger); font-size: 12px; }
 .card-error:empty { display: none; }
-button:focus-visible { outline: 2px solid #2f6fd1; outline-offset: 1px; }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }

@@ -5,113 +5,225 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:;">
   <title>ClearWrite</title>
+  <link rel="stylesheet" href="./tokens.css">
   <link rel="stylesheet" href="./app.css">
   <script defer src="./app.js"></script>
 </head>
-<body class="dashboard-page">
+<body>
+  <svg class="icon-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-logo" viewBox="0 0 24 24"><path d="M5.5 11.5l4 4 9-9"/><path d="M5.5 19.5h13" opacity=".55"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9v11h4.5v-6h4v6h4.5V9"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="M14.5 7.5l3 3"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 5 6.5v5.5c0 4.2 2.9 7.2 7 8.5 4.1-1.3 7-4.3 7-8.5V6.5z"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19v-3"/></symbol>
+      <symbol id="i-learn" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/><path d="m9 12 2 2 4-4"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+      <symbol id="i-app" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9h17"/></symbol>
+      <symbol id="i-block" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/></symbol>
+      <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.4 6.6a8 8 0 1 0 11.2 0"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5"/><path d="M5 19.5h14"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></symbol>
+    </defs>
+  </svg>
+
   <div class="shell">
     <aside class="rail">
-      <div class="brand"><span class="brand-mark">CW</span><div><strong>ClearWrite</strong><small>Desktop writing assistant</small></div></div>
+      <div class="brand"><span class="brand-mark"><svg><use href="#i-logo"/></svg></span><div><strong>ClearWrite</strong><small>Write clearly, anywhere</small></div></div>
       <div class="rail-label">WORKSPACE</div>
       <nav aria-label="Main navigation">
-        <button class="nav-item active" data-page="live"><span class="nav-glyph">01</span>Live writing</button>
-        <button class="nav-item" data-page="home"><span class="nav-glyph">02</span>Overview</button>
-        <button class="nav-item" data-page="settings"><span class="nav-glyph">03</span>Settings</button>
+        <button class="nav-item active" data-page="live"><svg class="icon"><use href="#i-home"/></svg><span>Home</span></button>
+        <button class="nav-item" data-page="settings"><svg class="icon"><use href="#i-settings"/></svg><span>Settings</span></button>
       </nav>
       <div class="rail-bottom">
-        <div class="rail-connection"><span class="connection-indicator" id="rail-status-dot"></span><div><strong id="rail-status-label">ChatGPT not connected</strong><small id="rail-status-detail">Connect to enable AI actions</small></div></div>
-        <div class="rail-foot"><span class="privacy-dot"></span><span>Focused text checked after a pause</span></div>
-        <div class="workspace-owner"><span class="owner-avatar" aria-hidden="true">CW</span><div><strong>Your workspace</strong><small>ClearWrite</small></div></div>
+        <div class="rail-card"><span class="connection-indicator" id="rail-status-dot"></span><div><strong id="rail-status-label">Offline only</strong><small id="rail-status-detail">Checked on this device</small></div></div>
+        <div class="rail-foot"><span id="footer-provider">On-device checking</span><span class="footer-version"></span></div>
       </div>
     </aside>
+
     <main class="main">
-      <header class="topbar"><div class="breadcrumbs"><span>ClearWrite</span><span class="crumb-separator">/</span><strong id="page-label">Live writing</strong></div><div class="top-status"><i id="status-dot"></i><span id="status-label">Not connected</span></div></header>
-      <div class="update-banner hidden" id="update-banner" role="status"><span id="update-banner-text"></span><button class="text-button" id="update-banner-open">View update</button></div>
-      <section class="content live-content" id="live-page">
-        <div class="page-title"><div class="eyebrow">DESKTOP WRITING ASSISTANT</div><h1>Write anywhere.</h1><p>Spelling and grammar suggestions work offline out of the box. Manual proofreading stays available with your shortcut, and text is never replaced automatically.</p></div>
-        <section class="settings-block mode-block" aria-labelledby="mode-heading">
-          <div class="settings-heading"><div><span class="eyebrow">PROOFREADING MODE</span><h2 id="mode-heading">Where should your writing be checked?</h2></div></div>
-          <div class="mode-options" role="radiogroup" aria-labelledby="mode-heading">
-            <label class="mode-option"><input type="radio" name="proofreading-mode" value="offline" id="mode-offline"><span><b>Offline only</b><small>Spelling and basic grammar are checked on this device by the bundled Harper checker. No account, API key, or internet connection is needed, and no writing is sent anywhere. English only; it catches common mistakes, not every mistake.</small></span></label>
-            <label class="mode-option"><input type="radio" name="proofreading-mode" value="ai" id="mode-ai"><span><b>AI-assisted</b><small id="mode-ai-detail">After you pause, text the device could not settle (or every changed paragraph, if you choose) is sent to your selected AI provider for context-aware correction. Rephrase, tone, continue, and reply actions become available. If a request fails, the on-device result is shown instead.</small></span></label>
+      <header class="page-header">
+        <div>
+          <div class="eyebrow" id="page-eyebrow">WORKSPACE</div>
+          <h1 id="page-label">Home</h1>
+          <p id="page-subtitle">Spelling and grammar help in every app you write in.</p>
+        </div>
+        <div class="header-actions">
+          <button class="icon-button" id="theme-button" type="button" title="Theme: System" aria-label="Change theme"><svg class="icon"><use href="#i-monitor"/></svg></button>
+          <button class="power-switch" id="monitor-toggle" type="button" aria-pressed="false"><span id="monitor-toggle-label">Checking off</span><span class="switch-track"><span class="switch-thumb"></span></span></button>
+        </div>
+      </header>
+      <div class="update-banner hidden" id="update-banner" role="status"><svg class="icon"><use href="#i-download"/></svg><span id="update-banner-text"></span><button class="text-button" id="update-banner-open">View update</button></div>
+
+      <!-- Home -->
+      <section class="content" id="live-page">
+        <div class="status-line"><i id="status-dot"></i><strong id="status-label">Offline only</strong><span id="monitor-status" role="status">Monitoring paused</span></div>
+
+        <div class="tiles">
+          <div class="tile tile-accent"><div class="tile-top"><span>Checking</span><svg class="icon"><use href="#i-power"/></svg></div><div class="tile-value" id="monitor-heading">Paused</div><div class="tile-detail"><span class="connection-indicator" id="monitor-indicator"></span><span id="monitor-current-app">Not detected</span></div></div>
+          <div class="tile"><div class="tile-top"><span>Checked by</span><svg class="icon"><use href="#i-shield"/></svg></div><div class="tile-value" id="tile-mode">This PC</div><div class="tile-detail" id="tile-mode-detail">Nothing is sent anywhere</div></div>
+          <div class="tile"><div class="tile-top"><span>Learned corrections</span><svg class="icon"><use href="#i-learn"/></svg></div><div class="tile-value" id="tile-learned">0</div><div class="tile-detail">From the fixes you accept</div></div>
+          <div class="tile"><div class="tile-top"><span>Your dictionary</span><svg class="icon"><use href="#i-book"/></svg></div><div class="tile-value" id="tile-words">0</div><div class="tile-detail">Words never flagged</div></div>
+        </div>
+
+        <section class="card" aria-labelledby="mode-heading">
+          <div class="card-head"><div><h2 id="mode-heading">Where your writing is checked</h2><p>Change this at any time; it applies to the next check.</p></div></div>
+          <div class="mode-options two" role="radiogroup" aria-labelledby="mode-heading">
+            <label class="mode-option"><input type="radio" name="proofreading-mode" value="offline" id="mode-offline"><span><b><svg class="icon"><use href="#i-shield"/></svg>On this PC only</b><small>Spelling and grammar are checked on this device. No account, key or internet needed; nothing is sent. English only.</small></span></label>
+            <label class="mode-option"><input type="radio" name="proofreading-mode" value="ai" id="mode-ai"><span><b><svg class="icon"><use href="#i-spark"/></svg>AI-assisted</b><small id="mode-ai-detail">After you pause, text is sent to your AI provider for context-aware fixes. Rephrase, tone and reply become available.</small></span></label>
           </div>
-          <div class="mode-options scope-options" role="radiogroup" aria-label="When AI-assisted is on, what is sent">
-            <label class="mode-option"><input type="radio" name="ai-scope" value="unsure" id="scope-unsure"><span><b>Ask the AI only when unsure</b><small>The device checks everything first. Only paragraphs it could not settle are sent; the rest never leave this PC. Fewer requests, more private.</small></span></label>
-            <label class="mode-option"><input type="radio" name="ai-scope" value="all" id="scope-all"><span><b>Send every changed paragraph</b><small>Most thorough: the AI can also catch mistakes the device did not notice.</small></span></label>
+          <div class="scope-wrap" id="scope-wrap">
+            <div class="sub-label">What is sent to the AI</div>
+            <div class="segmented" role="radiogroup" aria-label="When AI-assisted is on, what is sent">
+              <label><input type="radio" name="ai-scope" value="unsure" id="scope-unsure"><span>Only text the PC is unsure about</span></label>
+              <label><input type="radio" name="ai-scope" value="all" id="scope-all"><span>Every changed paragraph</span></label>
+            </div>
           </div>
           <p class="mode-note" id="mode-note" role="status"></p>
+          <div class="live-provider-line"><span class="live-indicator"></span><span id="live-provider-label">Checked on this device</span><span id="live-model-label"></span></div>
         </section>
-        <div class="live-provider-line"><span class="live-indicator"></span><span id="live-provider-label">Suggestions use your selected provider</span><span id="live-model-label"></span></div>
-        <section class="settings-block focus-monitor-block">
-          <div class="settings-heading"><div><span class="eyebrow">ACTIVE FIELD MONITOR</span><h2 id="monitor-heading">Monitoring is paused</h2><p id="monitor-status" role="status">Monitoring paused</p></div><button class="secondary" id="monitor-toggle" aria-pressed="false">Resume monitoring</button></div>
-          <div class="monitor-details"><span class="connection-indicator" id="monitor-indicator"></span><span id="monitor-privacy">Only editable fields with a detected text change can trigger a suggestion. Password fields, read-only documents, and excluded apps are ignored. When the allowlist is on, other apps are checked by process name before their text is read.</span></div>
-          <div class="mode-options" role="radiogroup" aria-label="How suggestions appear" id="suggestion-style">
-            <label class="mode-option"><input type="radio" name="suggestion-style" value="inline"><span><b>Inline, like Grammarly</b><small>Mistakes are underlined in your text. Hover or click one for a card with the fix; a small widget in the corner of the field shows the count and opens the full panel.</small></span></label>
-            <label class="mode-option"><input type="radio" name="suggestion-style" value="panel"><span><b>Panel</b><small>The ClearWrite panel opens next to the field while you write.</small></span></label>
-          </div>
-          <label class="setting-toggle"><input id="underlines-toggle" type="checkbox"><span>Underline mistakes in the text (in editors that report word positions); click an underline to review it</span></label>
-          <div class="monitor-app-row"><span>Last external app: <strong id="monitor-current-app">Not detected</strong></span><button class="text-button" id="allow-current-app" disabled>Add this app to allowlist</button></div>
-          <div class="monitor-pause-actions"><button class="secondary" id="pause-monitor-hour">Pause for 1 hour</button><button class="secondary" id="pause-monitor-tomorrow">Pause until tomorrow</button></div>
-        </section>
-        <p class="live-privacy">Suggestions appear as underlines and cards in your text, or in a small panel near your writing, depending on the setting above. ClearWrite does not read surrounding chat messages.</p>
-      </section>
-      <section class="content hidden" id="home-page">
-        <div class="page-title"><div class="eyebrow">DESKTOP ASSISTANT</div><h1>Write with more confidence.</h1><p>Improve a draft in the app where you’re already writing.</p></div>
-        <section class="connect-section" id="connect-section">
-          <div class="connect-heading"><div class="openai-mark">O</div><div><span class="eyebrow">AI CONNECTION</span><h2>Connect your ChatGPT plan</h2><p>Optional: only needed for AI-assisted mode. Sign in with OpenAI; no API key or separate model setup.</p></div></div>
-          <button class="primary" id="connect-button">Continue with ChatGPT <span aria-hidden="true">→</span></button>
-          <p class="fine-print">You choose whether ClearWrite can use your plan during sign-in.</p>
-        </section>
-        <section class="connect-section hidden" id="gemini-connect-section">
-          <div class="connect-heading"><div class="openai-mark">G</div><div><span class="eyebrow">AI CONNECTION</span><h2>Set up Gemini</h2><p>Optional: only needed for AI-assisted mode. Add and verify your Google AI Studio API key in Settings.</p></div></div>
-          <button class="secondary" id="gemini-settings-button">Open Gemini settings</button>
-          <p class="fine-print">Your key is encrypted on this device and never shown back in ClearWrite.</p>
-        </section>
-        <section class="connected-section hidden" id="connected-section">
-          <div class="connection-row"><div class="provider-avatar">O</div><div class="provider-details"><span class="eyebrow">AI CONNECTION</span><h2 id="account-label">ChatGPT</h2><p id="account-email">ChatGPT plan usage is enabled.</p></div><span class="connected-badge"><i></i>Connected</span></div>
-          <div class="control-row"><label for="model-select">Model for writing actions</label><select id="model-select"></select><button class="text-button" id="usage-button">Usage settings <span aria-hidden="true">↗</span></button></div>
-        </section>
-        <section class="workflow-section">
-          <div class="section-heading"><div><div class="eyebrow">QUICK ACCESS</div><h2>Improve text anywhere</h2><p>Select text in a writing field, then open the assistant.</p></div><button class="hotkey-button" id="shortcut-chip" title="Change shortcut in Settings"><span class="hotkey-label">Ctrl + Shift + Space</span><span class="edit-mark">Edit</span></button></div>
-          <div class="action-grid">
-            <div class="action-item"><span class="action-index index-coral">A</span><div><b>Correct</b><span>Spelling, grammar, punctuation</span></div><span class="action-arrow">↗</span></div>
-            <div class="action-item"><span class="action-index index-teal">B</span><div><b>Rewrite</b><span>Clarity, tone, and flow</span></div><span class="action-arrow">↗</span></div>
-            <div class="action-item"><span class="action-index index-blue">C</span><div><b>Respond</b><span>Draft a reply from selected text</span></div><span class="action-arrow">↗</span></div>
-          </div>
-        </section>
-        <section class="privacy-notice"><div class="privacy-accent"></div><div><span class="eyebrow">PRIVACY</span><strong>Your text stays under your control</strong><p>Monitoring starts off. When enabled, editable fields may be sent to your selected provider after a detected change and pause. Password fields, read-only documents, and excluded apps are ignored. Suggestions are never applied without your approval.</p></div><span class="privacy-shield">REVIEW</span></section>
+
+        <div class="card-row">
+          <section class="card">
+            <div class="card-head"><div><h2>The app you're writing in</h2><p id="monitor-privacy">Password fields, read-only documents and excluded apps are never read.</p></div></div>
+            <div class="list-row"><span class="row-icon"><svg class="icon"><use href="#i-app"/></svg></span><div><b id="current-app-name">No app yet</b><small>Last app with a text field</small></div><button class="text-button" id="allow-current-app" disabled>Add to allowed apps</button></div>
+            <div class="button-row"><button class="secondary" id="pause-monitor-hour"><svg class="icon"><use href="#i-pause"/></svg>Pause 1 hour</button><button class="secondary" id="pause-monitor-tomorrow">Pause until tomorrow</button></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><div><h2>Quick access</h2><p>Select text in any app, then press</p></div><button class="hotkey-button" id="shortcut-chip" title="Change the shortcut in Settings">Ctrl + Shift + Space</button></div>
+            <ul class="mini-list">
+              <li><span class="row-icon"><svg class="icon"><use href="#i-pen"/></svg></span><div><b>Correct</b><small>Spelling, grammar, punctuation</small></div></li>
+              <li><span class="row-icon"><svg class="icon"><use href="#i-spark"/></svg></span><div><b>Rewrite and reply</b><small>Tone, clarity and drafted replies (AI-assisted)</small></div></li>
+            </ul>
+          </section>
+        </div>
         <p class="status-message" id="notice" role="status"></p>
       </section>
+
+      <!-- Settings -->
       <section class="content hidden" id="settings-page">
-        <div class="page-title"><div class="eyebrow">PREFERENCES</div><h1>Settings</h1><p>Control how ClearWrite opens and connects.</p></div>
-        <section class="settings-block" id="updates-section" aria-labelledby="updates-heading">
-          <div class="settings-heading"><div><span class="eyebrow">APPLICATION</span><h2 id="updates-heading">Updates</h2><p id="update-version"></p></div></div>
-          <p id="update-status" role="status">Ready to check for updates.</p>
-          <progress class="hidden" id="update-progress" max="100" value="0" aria-label="Update download progress"></progress>
-          <div class="account-controls update-controls">
-            <button class="secondary" id="update-check">Check for updates</button>
-            <button class="primary hidden" id="update-download">Download update</button>
-            <button class="secondary hidden" id="update-cancel">Cancel download</button>
-            <button class="primary hidden" id="update-install">Restart and install</button>
-            <button class="text-button" id="update-releases">Release notes</button>
-          </div>
-          <label class="setting-toggle"><input id="automatic-updates" type="checkbox"><span>Check GitHub for updates automatically</span></label>
-          <small id="update-privacy">Checks contact GitHub at startup and every six hours. No writing or AI credentials are sent. Downloads and restarts require your approval. This beta is unsigned.</small>
-        </section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">ON-DEVICE CHECKER</span><h2>English dialect</h2><p>Offline checking currently supports English only. The dialect decides spellings such as color/colour.</p></div><span class="settings-symbol symbol-teal">EN</span></div><div class="shortcut-controls"><select id="dialect-select" aria-label="English dialect"></select></div></section>
-        <section class="settings-block dictionary-block"><div class="settings-heading"><div><span class="eyebrow">ON-DEVICE CHECKER</span><h2>Personal dictionary</h2><p>Names and uncommon words you add here are no longer flagged as misspelled. Words are added only when you choose to.</p></div><span class="settings-symbol symbol-blue">Aa</span></div><div class="shortcut-controls"><input id="dictionary-input" aria-label="Word to add" placeholder="Add a name or word" spellcheck="false" maxlength="48"><button class="secondary" id="dictionary-add">Add to dictionary</button></div><ul class="dictionary-list" id="dictionary-list" aria-label="Personal dictionary words"></ul><small id="dictionary-location">Stored only on this device, never uploaded or written to logs.</small></section>
-        <section class="settings-block learning-block"><div class="settings-heading"><div><span class="eyebrow">LEARNS FROM YOU</span><h2>Learned corrections</h2><p>ClearWrite remembers the changes you accept and the suggestions you ignore. A change you accept twice is suggested again automatically; a suggestion you ignore twice is shown as ignored. Nothing is applied without your click.</p></div><span class="settings-symbol symbol-blue">&#8634;</span></div><ul class="dictionary-list learning-list" id="learning-list" aria-label="Learned corrections"></ul><div class="shortcut-controls"><button class="secondary" id="learning-clear" type="button">Forget everything learned</button></div><small id="learning-location">Stored only on this device, next to your dictionary; never uploaded or written to logs.</small></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">AI PROVIDER</span><h2>Choose a provider</h2><p>Used only in AI-assisted mode. In Offline only mode no text is sent to it.</p></div><span class="settings-symbol symbol-blue">AI</span></div><div class="shortcut-controls"><select id="provider-select" aria-label="AI provider"><option value="chatgpt">ChatGPT plan</option><option value="gemini">Google Gemini API</option></select></div></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">WORKFLOW</span><h2>Desktop shortcut</h2><p>Use it after selecting text in another app.</p></div><span class="settings-symbol symbol-coral">⌨</span></div><div class="shortcut-controls"><input id="shortcut-input" value="CommandOrControl+Shift+Space" aria-label="Desktop shortcut"><button class="secondary" id="shortcut-save">Save shortcut</button></div><small>Default: Ctrl + Shift + Space</small></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">PRIVACY</span><h2>Excluded apps</h2><p>Automatic monitoring will skip these Windows process names.</p></div><span class="settings-symbol symbol-teal">OFF</span></div><div class="shortcut-controls"><input id="excluded-apps-input" aria-label="Excluded apps" placeholder="myapp, browser"><button class="secondary" id="excluded-apps-save">Save exclusions</button></div><small>Comma-separated process names; .exe is optional. ClearWrite, Command Prompt, PowerShell, Windows Terminal, and Registry Editor are always excluded.</small></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">PRIVACY</span><h2>Allowed apps</h2><p>Limit automatic monitoring to apps you explicitly choose.</p></div><span class="settings-symbol symbol-blue">APP</span></div><label class="setting-toggle"><input id="restrict-apps-toggle" type="checkbox"><span>Monitor only apps in this list</span></label><div class="shortcut-controls"><input id="allowed-apps-input" aria-label="Allowed apps" placeholder="notepad, ms-teams"><button class="secondary" id="allowed-apps-save">Save allowed apps</button></div><small>Use process names without .exe. When this is on and the list is empty, no apps are monitored. Use “Add this app to allowlist” on the Live writing page after focusing the app you want to add.</small></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">STARTUP</span><h2>Open with Windows</h2><p>Affects this Windows account only.</p></div><span class="settings-symbol symbol-blue">↗</span></div><label class="setting-toggle"><input id="startup-toggle" type="checkbox"><span>Start ClearWrite when I sign in</span></label></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">GOOGLE GEMINI</span><h2>Gemini API key</h2><p id="gemini-status">No Gemini API key saved.</p></div><span class="settings-symbol symbol-blue">G</span></div><div class="shortcut-controls"><input id="gemini-key-input" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste your Gemini API key" aria-label="Gemini API key"><button class="secondary" id="gemini-save-button">Verify and save</button></div><div class="account-controls"><button class="secondary danger-button hidden" id="gemini-remove-button">Remove key</button><button class="text-button hidden" id="gemini-refresh-button">Refresh models</button><button class="text-button hidden" id="gemini-test-button">Test Gemini</button></div><small>Use a Gemini Developer API key from Google AI Studio. API limits and billing depend on your Google project; free-tier data may be used to improve Google products.</small></section>
-        <section class="settings-block"><div class="settings-heading"><div><span class="eyebrow">ACCOUNT</span><h2>ChatGPT connection</h2><p id="settings-connection">Not connected</p></div><span class="settings-symbol symbol-teal">O</span></div><div class="account-controls"><button class="secondary danger-button hidden" id="disconnect-button">Disconnect</button><button class="text-button hidden" id="reconnect-button">Reconnect plan usage</button></div></section>
-        <section class="settings-block storage-block"><div class="settings-heading"><div><span class="eyebrow">ON THIS DEVICE</span><h2>Local storage</h2><p>Preferences and encrypted sign-in tokens remain in your local ClearWrite data folder.</p></div><span class="settings-symbol symbol-blue">PC</span></div><p class="storage-footnote">Your ChatGPT password is never stored.</p></section>
+        <div class="tabs" role="tablist" aria-label="Settings sections">
+          <button class="tab active" role="tab" data-tab="general" aria-selected="true">General</button>
+          <button class="tab" role="tab" data-tab="writing" aria-selected="false">Writing</button>
+          <button class="tab" role="tab" data-tab="privacy" aria-selected="false">Privacy</button>
+          <button class="tab" role="tab" data-tab="ai" aria-selected="false">AI</button>
+          <button class="tab" role="tab" data-tab="appearance" aria-selected="false">Appearance &amp; updates</button>
+        </div>
+
+        <div class="tab-panel" data-panel="general" role="tabpanel">
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-pen"/></svg></span><div><h2>How suggestions appear</h2><p>Choose how ClearWrite shows mistakes while you type.</p></div></div>
+            <div class="mode-options two" role="radiogroup" aria-label="How suggestions appear" id="suggestion-style">
+              <label class="mode-option"><input type="radio" name="suggestion-style" value="inline"><span><b>Inline, like Grammarly</b><small>Mistakes are underlined. Hover or click one for a card with the fix; a small widget at the corner of the field shows the count.</small></span></label>
+              <label class="mode-option"><input type="radio" name="suggestion-style" value="panel"><span><b>Side panel</b><small>The ClearWrite panel opens next to the field while you write.</small></span></label>
+            </div>
+            <label class="setting-row"><span><b>Underline mistakes in the text</b><small>In editors that report word positions</small></span><input class="switch" id="underlines-toggle" type="checkbox"></label>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-key"/></svg></span><div><h2>Keyboard shortcut</h2><p>Select text in another app, then press it to open ClearWrite. Default: Ctrl + Shift + Space.</p></div></div>
+            <div class="input-row"><input id="shortcut-input" class="mono" value="CommandOrControl+Shift+Space" aria-label="Keyboard shortcut"><button class="secondary" id="shortcut-save">Save</button></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-power"/></svg></span><div><h2>Startup</h2><p>Affects this Windows account only.</p></div></div>
+            <label class="setting-row"><span><b>Start ClearWrite when I sign in</b></span><input class="switch" id="startup-toggle" type="checkbox"></label>
+          </section>
+        </div>
+
+        <div class="tab-panel hidden" data-panel="writing" role="tabpanel">
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-globe"/></svg></span><div><h2>English dialect</h2><p>Decides spellings such as color and colour.</p></div></div>
+            <div class="input-row"><select id="dialect-select" aria-label="English dialect"></select></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><h2>Personal dictionary</h2><p>Names and uncommon words you add are never flagged as misspelled.</p></div></div>
+            <div class="input-row"><input id="dictionary-input" aria-label="Word to add" placeholder="Add a name or word" spellcheck="false" maxlength="48"><button class="secondary" id="dictionary-add">Add</button></div>
+            <ul class="chip-list" id="dictionary-list" aria-label="Personal dictionary words"></ul>
+            <small class="hint" id="dictionary-location">Stored only on this device.</small>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-learn"/></svg></span><div><h2>Learned corrections</h2><p>Accept a fix twice and it is suggested first next time; ignore it twice and it is hidden. Nothing is applied without your click.</p></div><button class="secondary" id="learning-clear" type="button">Forget all</button></div>
+            <ul class="chip-list learning-list" id="learning-list" aria-label="Learned corrections"></ul>
+            <small class="hint" id="learning-location">Stored only on this device.</small>
+          </section>
+        </div>
+
+        <div class="tab-panel hidden" data-panel="privacy" role="tabpanel">
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-app"/></svg></span><div><h2>Allowed apps</h2><p>Limit checking to apps you choose. Tip: on Home, use “Add to allowed apps” while an app is open.</p></div></div>
+            <label class="setting-row"><span><b>Check only the apps in this list</b><small>When on and the list is empty, no app is checked</small></span><input class="switch" id="restrict-apps-toggle" type="checkbox"></label>
+            <div class="input-row"><input id="allowed-apps-input" class="mono" aria-label="Allowed apps" placeholder="notepad, ms-teams"><button class="secondary" id="allowed-apps-save">Save</button></div>
+            <small class="hint">Windows process names, separated by commas.</small>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-block"/></svg></span><div><h2>Excluded apps</h2><p>ClearWrite never reads text in these apps.</p></div></div>
+            <div class="input-row"><input id="excluded-apps-input" class="mono" aria-label="Excluded apps" placeholder="myapp, keepass"><button class="secondary" id="excluded-apps-save">Save</button></div>
+            <small class="hint">ClearWrite, Command Prompt, PowerShell, Windows Terminal and Registry Editor are always excluded.</small>
+          </section>
+          <section class="card storage-block">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-lock"/></svg></span><div><h2>Your data stays on this PC</h2><p>Preferences, your dictionary, learned corrections and encrypted keys are kept in your local ClearWrite folder. Nothing you write is logged.</p></div></div>
+          </section>
+        </div>
+
+        <div class="tab-panel hidden" data-panel="ai" role="tabpanel">
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-spark"/></svg></span><div><h2>AI provider</h2><p>Used only when “AI-assisted” is chosen on Home. On this PC only, no text is sent to it.</p></div></div>
+            <div class="input-row"><select id="provider-select" aria-label="AI provider"><option value="gemini">Google Gemini API</option><option value="chatgpt">ChatGPT plan</option></select></div>
+          </section>
+          <section class="card connect-section hidden" id="connect-section">
+            <div class="card-head"><span class="card-icon">O</span><div><h2>Connect your ChatGPT plan</h2><p>Sign in with OpenAI; no API key needed.</p></div><button class="primary" id="connect-button">Continue with ChatGPT</button></div>
+          </section>
+          <section class="card connect-section hidden" id="gemini-connect-section">
+            <div class="card-head"><span class="card-icon">G</span><div><h2>Set up Gemini</h2><p>Add and verify your Google AI Studio API key below.</p></div><button class="secondary" id="gemini-settings-button">Add key</button></div>
+          </section>
+          <section class="card hidden" id="connected-section">
+            <div class="card-head"><span class="card-icon provider-avatar">G</span><div><h2 id="account-label">Google Gemini</h2><p id="account-email"></p></div><span class="connected-badge"><i></i>Ready</span></div>
+            <div class="input-row"><label class="sub-label" for="model-select">Model</label><select id="model-select"></select><button class="text-button" id="usage-button">Usage settings</button></div>
+          </section>
+          <section class="card" id="gemini-card">
+            <div class="card-head"><span class="card-icon">G</span><div><h2>Gemini API key</h2><p id="gemini-status">No Gemini API key saved.</p></div></div>
+            <div class="input-row"><input id="gemini-key-input" class="mono" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste your Gemini API key" aria-label="Gemini API key"><button class="secondary" id="gemini-save-button">Verify and save</button></div>
+            <div class="button-row"><button class="secondary danger-button hidden" id="gemini-remove-button">Remove key</button><button class="text-button hidden" id="gemini-refresh-button">Refresh models</button><button class="text-button hidden" id="gemini-test-button">Test Gemini</button></div>
+            <small class="hint">Get a key from Google AI Studio. Limits and billing depend on your Google project; free-tier data may be used to improve Google products. The key is encrypted on this PC.</small>
+          </section>
+          <section class="card" id="chatgpt-card">
+            <div class="card-head"><span class="card-icon">O</span><div><h2>ChatGPT connection</h2><p id="settings-connection">Not connected</p></div></div>
+            <div class="button-row"><button class="secondary danger-button hidden" id="disconnect-button">Disconnect</button><button class="text-button hidden" id="reconnect-button">Reconnect plan usage</button></div>
+          </section>
+        </div>
+
+        <div class="tab-panel hidden" data-panel="appearance" role="tabpanel">
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-sun"/></svg></span><div><h2>Theme</h2><p>System follows your Windows setting. Applies to every ClearWrite window, including the cards in your text.</p></div></div>
+            <div class="theme-previews" role="radiogroup" aria-label="Theme">
+              <label class="theme-preview"><input type="radio" name="theme" value="system"><span class="preview preview-system"><i></i><i></i></span><b>System</b></label>
+              <label class="theme-preview"><input type="radio" name="theme" value="light"><span class="preview preview-light"><i></i><i></i></span><b>Light</b></label>
+              <label class="theme-preview"><input type="radio" name="theme" value="dark"><span class="preview preview-dark"><i></i><i></i></span><b>Dark</b></label>
+            </div>
+          </section>
+          <section class="card" id="updates-section" aria-labelledby="updates-heading">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-download"/></svg></span><div><h2 id="updates-heading">Updates</h2><p id="update-version"></p></div></div>
+            <p class="update-status" id="update-status" role="status">Ready to check for updates.</p>
+            <progress class="hidden" id="update-progress" max="100" value="0" aria-label="Update download progress"></progress>
+            <div class="button-row">
+              <button class="secondary" id="update-check">Check for updates</button>
+              <button class="primary hidden" id="update-download">Download update</button>
+              <button class="secondary hidden" id="update-cancel">Cancel download</button>
+              <button class="primary hidden" id="update-install">Restart and install</button>
+              <button class="text-button" id="update-releases">Release notes</button>
+            </div>
+            <label class="setting-row"><span><b>Check for updates automatically</b><small id="update-privacy">At startup and every six hours. No writing is sent. Installing always asks first.</small></span><input class="switch" id="automatic-updates" type="checkbox"></label>
+          </section>
+        </div>
         <p class="status-message" id="settings-notice" role="status"></p>
       </section>
-      <footer><span class="footer-mark">CW</span><span>ClearWrite</span><span class="footer-separator">·</span><span id="footer-provider">ChatGPT plan connection</span><span class="footer-version">0.2.0-beta.1</span></footer>
     </main>
   </div>
 </body>

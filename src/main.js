@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Notification, safeStorage, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeTheme, Notification, safeStorage, screen, shell, Tray } from 'electron';
 import { createUpdateManager } from './updates.js';
 import { existsSync } from 'node:fs';
 import { createMonitorWatchdog } from './monitor-watchdog.js';
@@ -118,6 +118,8 @@ let state = {
   // 'inline': like Grammarly - underlines, a corner widget and suggestion cards; the panel opens
   // only when asked. 'panel': the panel comes forward while you write (earlier behaviour).
   suggestionStyle: 'inline',
+  // 'system' follows Windows; every ClearWrite window reads it through prefers-color-scheme.
+  theme: 'system',
   dictionaryWords: [],
   learnedPatterns: [],
   dictionaryLocation: '',
@@ -309,7 +311,7 @@ async function showMain() {
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 900, height: 700, minWidth: 720, minHeight: 580,
-    show: true, title: 'ClearWrite', backgroundColor: '#f6f7f7', autoHideMenuBar: true,
+    show: true, title: 'ClearWrite', backgroundColor: nativeTheme.shouldUseDarkColors ? '#0e1513' : '#f5f7f6', autoHideMenuBar: true,
     webPreferences: { preload: path.join(root, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: false, spellcheck: false },
   });
   monitorWindow(mainWindow, 'main');
@@ -331,7 +333,7 @@ async function createAssistantWindow() {
     // Topmost is applied below with an explicit level; the constructor option would use
     // Electron's default 'floating' level, which Windows-side Electron puts behind the taskbar.
     alwaysOnTop: false, skipTaskbar: true, title: 'ClearWrite',
-    backgroundColor: '#ffffff',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#141e1b' : '#ffffff',
     webPreferences: { preload: path.join(root, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: false, spellcheck: false },
   });
   assistantWindow = win;
@@ -1980,6 +1982,13 @@ handle('card:close', () => hideCard());
 handle('card:hover', (inside) => { cardHovered = inside === true; if (!cardHovered) scheduleCardHide(); else clearTimeout(cardHideTimer); });
 handle('card:resize', (height) => resizeCard(height));
 handle('app:set-suggestion-style', setSuggestionStyle);
+handle('app:set-theme', async (value) => {
+  if (!['system', 'light', 'dark'].includes(value)) throw new Error('Choose System, Light or Dark.');
+  state.theme = value;
+  nativeTheme.themeSource = value;
+  await savePreferences();
+  publishState();
+});
 handle('dictionary:list', () => personalDictionary.list());
 handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
 handle('learning:clear', async () => { await learningMemory.clear(); state.learnedPatterns = []; publishState(); });
@@ -2074,6 +2083,8 @@ async function loadPreferences() {
     if (raw.aiReviewScope === 'all' || raw.aiReviewScope === 'unsure') state.aiReviewScope = raw.aiReviewScope;
     if (typeof raw.showUnderlines === 'boolean') state.showUnderlines = raw.showUnderlines;
     if (raw.suggestionStyle === 'inline' || raw.suggestionStyle === 'panel') state.suggestionStyle = raw.suggestionStyle;
+    if (['system', 'light', 'dark'].includes(raw.theme)) state.theme = raw.theme;
+    nativeTheme.themeSource = state.theme;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
       for (const provider of ['chatgpt', 'gemini']) {
         if (typeof raw.selectedModels[provider] === 'string' && raw.selectedModels[provider].length <= 120) selectedModels[provider] = raw.selectedModels[provider];
@@ -2132,7 +2143,7 @@ async function writePreferences() {
     aiReviewScope: state.aiReviewScope,
     showUnderlines: state.showUnderlines,
     suggestionStyle: state.suggestionStyle,
-    suggestionStyle: state.suggestionStyle,
+    theme: state.theme,
     privacyDefaultsVersion: 1,
   };
   try { await writeFile(temporary, JSON.stringify(contents, null, 2), { flag: 'wx' }); await rename(temporary, file); }

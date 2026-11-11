@@ -144,6 +144,21 @@ public static class ClearWriteInputHost {
     if (!string.Equals(((ValuePattern)pattern).Current.Value, expected, StringComparison.Ordinal)) return "The text changed since this suggestion was created. Nothing was replaced.";
     return "";
   }
+  // The editor ClearWrite read: the focused element, or one of its first six ancestors when the
+  // focus reader resolved a container around the focused field (common in browsers and Electron
+  // apps). Null when focus has moved to a different editor.
+  static AutomationElement FindEditor(string runtimeId) {
+    if (string.IsNullOrEmpty(runtimeId)) return null;
+    try {
+      var element = AutomationElement.FocusedElement;
+      for (int depth = 0; element != null && depth < 7; depth++) {
+        if (string.Join(".", element.GetRuntimeId()) == runtimeId) return element;
+        element = TreeWalker.RawViewWalker.GetParent(element);
+      }
+    } catch (Exception) { }
+    return null;
+  }
+
   // Classic edit controls ignore Ctrl+A, so select through TextPattern when available.
   static bool SelectAllFocused() {
     try {
@@ -250,6 +265,18 @@ public static class ClearWriteInputHost {
 
   // ---- Actions ------------------------------------------------------------------------------
   static string Normalize(string value) { return (value ?? "").Replace("\r\n", "\n").Replace("\r", "\n"); }
+  // When the selection really ended with a paragraph break (copied text ends in one), the pasted
+  // text keeps it, so replacing a whole paragraph never merges it with the next one.
+  static string MissingBreaks(string copied, string replacement) {
+    var raw = copied ?? "";
+    int end = raw.Length;
+    while (end > 0 && (raw[end - 1] == '\r' || raw[end - 1] == '\n')) end--;
+    var breaks = raw.Substring(end);
+    if (breaks.Length == 0 || replacement.EndsWith("\n") || replacement.EndsWith("\r")) return "";
+    return breaks;
+  }
+  // Word and Outlook can add a paragraph break when copying a selection; ignore trailing breaks.
+  static bool SameSelection(string copied, string expected) { return Normalize(copied).TrimEnd('\n') == Normalize(expected).TrimEnd('\n'); }
 
   static string Capture(long id) {
     try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }
@@ -287,12 +314,13 @@ public static class ClearWriteInputHost {
     try {
       Chord(0x43);
       var copied = WaitForClipboard(before, 900);
-      if (!copied || Normalize(ReadText()) != Normalize(expected)) {
+      var copiedText = copied ? ReadText() : "";
+      if (!copied || !SameSelection(copiedText, expected)) {
         throw new InvalidOperationException(mode == "field"
           ? "ClearWrite could not select exactly this field's text, so nothing was replaced. Use Copy instead."
           : "The original text is no longer selected, so nothing was replaced. Select it again and press the shortcut, or use Copy.");
       }
-      WriteText(replacement);
+      WriteText(replacement + MissingBreaks(copiedText, replacement));
       var written = GetClipboardSequenceNumber();
       if (GetForegroundWindow() != target) throw new InvalidOperationException("The original app is no longer active. Nothing was replaced.");
       if (runtimeId.Length > 0 && FocusedRuntimeId() != runtimeId) throw new InvalidOperationException("The focused text field changed. Nothing was replaced.");
@@ -322,8 +350,8 @@ public static class ClearWriteInputHost {
       var parts = raw.Split('\u0001');
       if (parts.Length != 4 || parts[1].Length == 0) { problem = "Invalid change."; break; }
       string before = parts[0], original = parts[1], after = parts[2], replacement = parts[3];
-      var focused = AutomationElement.FocusedElement;
-      if (focused == null || string.Join(".", focused.GetRuntimeId()) != runtimeId) { problem = "The focused text field changed."; break; }
+      var focused = FindEditor(runtimeId);
+      if (focused == null) { problem = "The focused text field changed."; break; }
       object pattern;
       if (!focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) { problem = "This editor does not support changing single words. Use Copy instead."; break; }
       var document = ((TextPattern)pattern).DocumentRange;
@@ -343,10 +371,10 @@ public static class ClearWriteInputHost {
       bool pasted = false;
       try {
         Chord(0x43);
-        if (!WaitForClipboard(copiedBefore, 900) || Normalize(ReadText()) != Normalize(original)) { problem = "The selected text did not match the change."; break; }
+        if (!WaitForClipboard(copiedBefore, 900) || !SameSelection(ReadText(), original)) { problem = "The selected text did not match the change."; break; }
         WriteText(replacement);
         var written = GetClipboardSequenceNumber();
-        if (GetForegroundWindow() != target || FocusedRuntimeId() != runtimeId) { problem = "The original field is no longer active."; break; }
+        if (GetForegroundWindow() != target || FindEditor(runtimeId) == null) { problem = "The original field is no longer active."; break; }
         Chord(0x56);
         pasted = true;
         // Wait until the editor shows the replacement (it has read the clipboard) before the
@@ -378,9 +406,9 @@ public static class ClearWriteInputHost {
     TextPattern text = null;
     if (GetForegroundWindow() == target) {
       try {
-        var focused = AutomationElement.FocusedElement;
+        var focused = FindEditor(runtimeId);
         object pattern;
-        if (focused != null && string.Join(".", focused.GetRuntimeId()) == runtimeId && focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) text = (TextPattern)pattern;
+        if (focused != null && focused.TryGetCurrentPattern(TextPattern.Pattern, out pattern)) text = (TextPattern)pattern;
       } catch (Exception) { text = null; }
     }
     for (int index = 0; index < spans.Length; index++) {

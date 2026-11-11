@@ -663,11 +663,22 @@ function underlineTarget() {
   return { snapshot, findings: suggestion.findings, locators, key: `${monitorSession.revision}|${suggestion.findings.map((finding) => `${finding.choice}${finding.ignored ? 'i' : ''}`).join(',')}` };
 }
 
+// The overlay only takes clicks while the pointer is over an underline. Every hide and show
+// resets it to click-through, so it can never be left catching clicks meant for the editor.
+function setUnderlinesClickThrough() {
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.setIgnoreMouseEvents(true, { forward: true });
+}
+
+function hideOverlay() {
+  setUnderlinesClickThrough();
+  if (underlineWindow && !underlineWindow.isDestroyed() && underlineWindow.isVisible()) underlineWindow.hide();
+}
+
 function hideUnderlines() {
   clearInterval(underlineTimer);
   underlineTimer = undefined;
   underlineKey = '';
-  if (underlineWindow && !underlineWindow.isDestroyed() && underlineWindow.isVisible()) underlineWindow.hide();
+  hideOverlay();
 }
 
 function ensureUnderlineWindow() {
@@ -702,13 +713,13 @@ async function measureUnderlines() {
       }),
     }));
     const layout = underlineLayout(items);
-    if (!layout) { if (underlineWindow?.isVisible()) underlineWindow.hide(); return; }
+    if (!layout) { hideOverlay(); return; }
     const win = ensureUnderlineWindow();
     win.setBounds(layout.bounds);
     win.webContents.send('underlines:state', { items: layout.items });
-    if (!win.isVisible()) win.showInactive();
+    if (!win.isVisible()) { setUnderlinesClickThrough(); win.showInactive(); }
   } catch {
-    if (underlineWindow?.isVisible()) underlineWindow.hide();
+    hideOverlay();
   } finally {
     underlineBusy = false;
   }
@@ -719,7 +730,7 @@ function scheduleUnderlines() {
   if (!target) { hideUnderlines(); return; }
   if (target.key !== underlineKey) {
     underlineKey = target.key;
-    if (underlineWindow?.isVisible()) underlineWindow.hide();
+    hideOverlay();
     void measureUnderlines();
   }
   underlineTimer ??= setInterval(() => { void measureUnderlines(); }, UNDERLINE_REFRESH_MS);
@@ -727,7 +738,7 @@ function scheduleUnderlines() {
 
 async function openUnderline(index) {
   if (!Number.isSafeInteger(index)) return;
-  underlineWindow?.setIgnoreMouseEvents(true, { forward: true });
+  setUnderlinesClickThrough();
   await restorePanel();
   publishAssistantView({ focusFinding: index });
 }
@@ -1764,7 +1775,10 @@ handle('app:set-proofreading-mode', setProofreadingMode);
 handle('app:set-dialect', setEnglishDialect);
 handle('app:set-ai-scope', setAiReviewScope);
 handle('app:set-underlines', setShowUnderlines);
-handle('underlines:hover', (active) => { underlineWindow?.setIgnoreMouseEvents(!active, { forward: true }); });
+handle('underlines:hover', (active) => {
+  // Only a visible overlay may take clicks, and only while the pointer is over an underline.
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.setIgnoreMouseEvents(!(active === true && underlineWindow.isVisible()), { forward: true });
+});
 handle('underlines:open', openUnderline);
 handle('dictionary:list', () => personalDictionary.list());
 handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
@@ -1991,7 +2005,9 @@ else {
     try { state.learnedPatterns = await learningMemory.load(); }
     catch (error) { state.notice = error.message; state.learnedPatterns = []; }
     applyLocalCheckerConfig();
-    void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
+    // A real sentence, so Harper, the context model and the grammar model all load now rather
+    // than during the writer's first check.
+    void proofreadLocally('This is a short warm-up sentence for the checker.').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
     // Compile the keyboard/clipboard helper once now, so the first shortcut or Apply is fast.
     void warmWindowsInput().then(() => startup('input helper ready')).catch((error) => startup(`input helper warmup failed: ${error.message}`));
     await createTray();

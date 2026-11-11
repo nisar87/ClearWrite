@@ -246,3 +246,28 @@ test('word rectangles for underlines lie inside the editor window, in reading or
   const otherField = await wordBoundsInWindow({ target: hwnd, runtimeId: '42.1', spans: locators });
   assert.deepEqual(otherField, [[], []], 'nothing is measured in another field');
 });
+
+test('an editor read through a container is still matched (ancestor of the focused element)', async () => {
+  await resetRich();
+  const { parentRuntimeId } = fieldRuntimeId();
+  assert.ok(parentRuntimeId, 'the focused editor has a parent element');
+  // The parent window has no text interface: matching it must reach the text check, not stop at
+  // "the focused text field changed".
+  const result = await replaceSpansInWindow({ target: hwnd, runtimeId: parentRuntimeId, spans: [{ before: 'send ', original: 'teh', after: ' mesage', replacement: 'the' }] });
+  assert.equal(result.applied, 0);
+  assert.match(result.problem, /does not support changing single words/);
+});
+
+test('replacing a selection that includes a paragraph break keeps the break', async () => {
+  await resetRich();
+  const before = await richText();
+  const firstLine = before.split(/\r\n|\r|\n/)[0];
+  assert.equal(firstLine, 'Hello team,');
+  await command(`selectrich 0 ${firstLine.length + 1}`);
+  await sleep(150);
+  await command(`setclip ${b64('marker')}`);
+  await replaceSelectionInWindow({ target: hwnd, expected: 'Hello team,', replacement: 'Hi team,' });
+  await sleep(400);
+  const after = await richText();
+  assert.match(after, /^Hi team,(\r\n|\r|\n)Please send teh mesage today\./, JSON.stringify(after));
+});

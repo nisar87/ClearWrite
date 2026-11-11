@@ -17,5 +17,6 @@ $result = [ClearWriteEditorReader]::Read($Window, 0, [string[]]@(), [string[]]@(
 [pscustomobject]@{
   active = $result['active']; reason = $result['reason']; reader = $result['reader']; replaceSupported = $result['replaceSupported']
   hasText = $result.ContainsKey('text'); runtimeId = $result['runtimeId']
+  parentRuntimeId = $(try { $f = [System.Windows.Automation.AutomationElement]::FocusedElement; $p = [System.Windows.Automation.TreeWalker]::RawViewWalker.GetParent($f); [string]::Join('.', $p.GetRuntimeId()) } catch { '' })
   text = $(if ($IncludeText -and $result.ContainsKey('text')) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$result['text'])) } else { '' })
 } | ConvertTo-Json -Compress

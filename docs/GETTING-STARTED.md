@@ -24,7 +24,7 @@ SHA-256 checksum with SHA256SUMS.txt. Do not ignore an antivirus detection.
 ## Start writing
 
 1. Offline only is the default; no account or internet is required for checking.
-2. Enable monitoring on the Live writing page and type in an editable text field.
+2. Turn on the "Checking" switch at the top of the ClearWrite window and type in an editable text field.
 3. Review the writing panel's suggestions. Copy them or use Apply where supported.
 4. Alternatively select text and press Ctrl+Shift+Space.
 5. Closing the main window leaves ClearWrite in the tray. Use Quit there to exit.
@@ -39,7 +39,7 @@ copy-only, and elevated/remote/protected windows may not work automatically.
 The ChatGPT component is included; no DevKit installation is required.
 Choose ChatGPT in Settings, click Continue with ChatGPT, sign in using YOUR
 account in the browser and authorise plan usage. Then select a returned model
-and choose AI-assisted on the Live writing page.
+and choose AI-assisted on the Home page.
 
 An eligible ChatGPT Plus/Pro account and internet access are required for this
 plan-based integration. Having a free ChatGPT account alone is not sufficient.

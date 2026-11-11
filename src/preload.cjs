@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('clearWrite', {
   cardHover: (inside) => ipcRenderer.invoke('card:hover', inside),
   cardResize: (height) => ipcRenderer.invoke('card:resize', height),
   setSuggestionStyle: (style) => ipcRenderer.invoke('app:set-suggestion-style', style),
+  setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
   onBadge: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('badge:state', listener);

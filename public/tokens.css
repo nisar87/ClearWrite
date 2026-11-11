@@ -1,0 +1,75 @@
+/* ClearWrite design tokens, shared by every window (main window, panel, card, widget).
+   Light by default; dark when Windows (or the Appearance setting) asks for it. */
+:root {
+  color-scheme: light;
+  --bg: #f5f7f6;
+  --surface: #ffffff;
+  --surface-2: #f8faf9;
+  --surface-hover: #f0f4f2;
+  --line: #dfe6e3;
+  --line-strong: #c3d0ca;
+  --text: #16231f;
+  --muted: #55635e;
+  --soft: #7d8a85;
+  --accent: #167a62;
+  --accent-strong: #0f5f4c;
+  --accent-soft: #e5f3ed;
+  --accent-line: #a7d1c2;
+  --on-accent: #ffffff;
+  --danger: #c2412f;
+  --danger-soft: #fbe9e5;
+  --warn: #9a6512;
+  --warn-soft: #fdf5e4;
+  --warn-line: #e6cf98;
+  --info: #2f63c8;
+  --info-soft: #eaf0fc;
+  --info-line: #b9c9ec;
+  --added-bg: #d9f0e5;
+  --added-text: #12573f;
+  --removed-bg: #fbe2dc;
+  --removed-text: #9b3a2c;
+  --focus: #2f8a70;
+  --shadow-card: 0 1px 2px rgba(22, 35, 31, .05);
+  --shadow-overlay: 0 14px 40px rgba(22, 35, 31, .18);
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --radius-sm: 6px;
+  --radius-control: 8px;
+  --radius-panel: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0e1513;
+    --surface: #141e1b;
+    --surface-2: #18241f;
+    --surface-hover: #1d2b26;
+    --line: #25352f;
+    --line-strong: #37493f;
+    --text: #e3ebe7;
+    --muted: #a3b1ab;
+    --soft: #7f8d87;
+    --accent: #4fc79f;
+    --accent-strong: #74d9b5;
+    --accent-soft: #17332a;
+    --accent-line: #2d5a49;
+    --on-accent: #05130d;
+    --danger: #f2826f;
+    --danger-soft: #3a1f1a;
+    --warn: #e3b55a;
+    --warn-soft: #30281a;
+    --warn-line: #5c4a26;
+    --info: #92b2ff;
+    --info-soft: #1b2944;
+    --info-line: #33497a;
+    --added-bg: #173d2e;
+    --added-text: #8fe0bd;
+    --removed-bg: #43231d;
+    --removed-text: #f4a394;
+    --focus: #74d9b5;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow-overlay: 0 14px 40px rgba(0, 0, 0, .5);
+  }
+}

@@ -250,7 +250,7 @@ function render(state) {
     const blocked = needsAi && !state.aiAvailable;
     button.disabled = blocked;
     button.classList.toggle('needs-ai', needsAi && !state.aiAvailable);
-    button.title = blocked ? (state.proofreadingMode === 'ai' ? `Set up ${state.providerName} in Settings to use this action` : 'Needs AI-assisted mode (choose it in ClearWrite on the Live writing page)') : '';
+    button.title = blocked ? (state.proofreadingMode === 'ai' ? `Set up ${state.providerName} in Settings to use this action` : 'Needs AI-assisted mode (choose it on the ClearWrite Home page)') : '';
   });
   $('actions').querySelectorAll('.action-group').forEach((group) => { group.classList.toggle('hidden', !group.querySelector('[data-action]:not(.hidden)')); });
   show('more-button', available.length > 0 && !working && !menuAlwaysOpen);

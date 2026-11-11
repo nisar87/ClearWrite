@@ -50,7 +50,14 @@ function render(state) {
   $('gemini-remove-button').classList.toggle('hidden', !state.geminiConfigured);
   $('gemini-refresh-button').classList.toggle('hidden', !state.geminiConfigured);
   $('gemini-test-button').classList.toggle('hidden', !state.geminiConfigured);
-  $('footer-provider').textContent = isGemini ? 'Google Gemini API' : 'ChatGPT plan connection';
+  $('footer-provider').textContent = state.proofreadingMode === 'ai' ? (isGemini ? 'AI: Google Gemini' : 'AI: ChatGPT') : 'On-device checking';
+  const chatgptAvailable = state.session?.status !== 'unavailable';
+  $('chatgpt-card').classList.toggle('hidden', !chatgptAvailable);
+  $('gemini-card').classList.toggle('hidden', !isGemini && chatgptAvailable);
+  const chatgptOption = $('provider-select').querySelector('option[value="chatgpt"]');
+  chatgptOption.disabled = !chatgptAvailable && !isGemini ? false : !chatgptAvailable;
+  chatgptOption.textContent = chatgptAvailable ? 'ChatGPT plan' : 'ChatGPT plan (not included in this build)';
+  if (!chatgptAvailable) $('connect-section').classList.add('hidden');
   $('live-provider-label').textContent = connected
     ? `Live suggestions via ${isGemini ? 'Google Gemini' : 'ChatGPT'}`
     : `${isGemini ? 'Gemini' : 'ChatGPT'} is not connected`;
@@ -59,10 +66,11 @@ function render(state) {
   $('shortcut-input').value = state.shortcut;
   const timedPause = Boolean(state.monitorEnabled && state.monitorPausedUntil > Date.now());
   const monitoring = Boolean(state.monitorEnabled && !timedPause);
-  $('monitor-heading').textContent = monitoring ? 'Monitoring is on' : timedPause ? 'Monitoring is paused temporarily' : 'Monitoring is paused';
+  $('monitor-heading').textContent = monitoring ? 'On' : timedPause ? `Paused until ${new Date(state.monitorPausedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Paused';
   $('monitor-status').textContent = (state.monitorStatus || (monitoring ? 'Waiting for a text field' : 'Monitoring paused')) +
     (monitoring && state.panelPinned === false ? ' · The writing panel is not pinned on top, so the app you type in can cover it. Pin it from the panel or the tray.' : '');
-  $('monitor-toggle').textContent = monitoring ? 'Pause monitoring' : 'Resume monitoring';
+  $('monitor-toggle-label').textContent = monitoring ? 'Checking on' : 'Checking off';
+  $('monitor-toggle').classList.toggle('on', monitoring);
   $('monitor-toggle').setAttribute('aria-pressed', String(monitoring));
   $('monitor-indicator').classList.toggle('on', monitoring);
   $('pause-monitor-hour').disabled = !state.monitorEnabled;
@@ -75,9 +83,14 @@ function render(state) {
   const builtInExclusions = ['clearwrite', 'cmd', 'powershell', 'pwsh', 'windowsterminal', 'wt', 'regedit'];
   const appExcluded = builtInExclusions.includes(focusedApp) || (state.excludedApps || []).includes(focusedApp);
   const appAllowed = Boolean(state.restrictToAllowedApps && (state.allowedApps || []).includes(focusedApp));
-  $('monitor-current-app').textContent = focusedApp || (state.monitorEnabled ? 'Focus an app to detect it' : 'Turn monitoring on to detect an app');
+  $('monitor-current-app').textContent = focusedApp ? `Last app: ${focusedApp}` : monitoring ? 'Click into any text field' : 'Turn checking on to start';
+  $('current-app-name').textContent = focusedApp || 'No app yet';
   $('allow-current-app').disabled = !focusedApp || appExcluded || appAllowed;
-  $('allow-current-app').textContent = appExcluded ? 'Blocked by safety rule' : appAllowed ? 'Already allowed' : 'Add this app to allowlist';
+  $('allow-current-app').textContent = appExcluded ? 'Always excluded' : appAllowed ? 'Allowed' : 'Add to allowed apps';
+  document.querySelectorAll('input[name="theme"]').forEach((input) => { input.checked = input.value === (state.theme || 'system'); });
+  const theme = state.theme || 'system';
+  $('theme-button').title = `Theme: ${theme[0].toUpperCase()}${theme.slice(1)} (click to change)`;
+  $('theme-button').querySelector('use').setAttribute('href', theme === 'dark' ? '#i-moon' : theme === 'light' ? '#i-sun' : '#i-monitor');
   const select = $('model-select');
   select.replaceChildren();
   for (const model of state.models) {
@@ -99,7 +112,7 @@ function render(state) {
 }
 
 function openUpdates() {
-  document.querySelector('[data-page="settings"]').click();
+  showPage('settings', 'appearance');
   $('updates-section').scrollIntoView({ block: 'start' });
 }
 
@@ -149,16 +162,19 @@ function renderProofreading(state, { isGemini, connected }) {
   const providerLabel = isGemini ? 'Google Gemini' : 'ChatGPT';
   $('mode-offline').checked = offline;
   $('mode-ai').checked = !offline;
-  $('mode-ai-detail').textContent = `After you pause, eligible text from the field you are editing is sent to ${providerLabel} (your selected provider) for context-aware correction. Rephrase, tone, continue, and reply actions become available. If a request fails, the on-device result is shown instead.`;
+  $('mode-ai-detail').textContent = `After you pause, text is sent to ${providerLabel} for context-aware fixes. Rephrase, tone and reply become available. If a request fails, the on-device result is shown.`;
   $('mode-note').textContent = state.modeNotice
-    || (!offline && !connected ? `AI-assisted is selected, but ${providerLabel} is not set up yet. Until it is, text is checked on this device only. Set it up in Settings.` : '');
+    || (!offline && !connected ? `${providerLabel} is not set up yet, so text is checked on this device for now. Set it up in Settings › AI.` : '');
+  $('scope-wrap').classList.toggle('hidden', offline);
+  $('tile-mode').textContent = offline ? 'This PC' : providerLabel;
+  $('tile-mode-detail').textContent = offline ? 'Nothing is sent anywhere' : connected ? 'AI-assisted, after a pause' : `${providerLabel} not set up yet`;
   if (offline) {
     $('status-dot').classList.add('on');
-    $('status-label').textContent = 'Offline only';
+    $('status-label').textContent = 'On this PC only';
     $('rail-status-dot').classList.add('on');
-    $('rail-status-label').textContent = 'Offline only';
-    $('rail-status-detail').textContent = 'Checked on this device';
-    $('live-provider-label').textContent = 'Suggestions are checked on this device; no text is sent anywhere';
+    $('rail-status-label').textContent = 'On this PC only';
+    $('rail-status-detail').textContent = 'Nothing is sent anywhere';
+    $('live-provider-label').textContent = 'Checked on this device; no text is sent anywhere';
     $('live-model-label').textContent = '';
   } else {
     $('live-provider-label').textContent = connected ? `AI-assisted: eligible text is sent to ${providerLabel} after a pause` : `AI-assisted: ${providerLabel} is not set up, so text is checked on this device`;
@@ -202,6 +218,7 @@ function renderProofreading(state, { isGemini, connected }) {
     return item;
   }));
   renderLearning(state);
+  $('tile-words').textContent = (state.dictionaryWords || []).length.toLocaleString();
   $('dictionary-location').textContent = `${(state.dictionaryWords || []).length.toLocaleString()} word${(state.dictionaryWords || []).length === 1 ? '' : 's'}. Stored only on this device${state.dictionaryLocation ? ` (${state.dictionaryLocation})` : ''}; never uploaded or written to logs.`;
 }
 
@@ -226,6 +243,7 @@ function renderLearning(state) {
     return item;
   }));
   $('learning-clear').disabled = !patterns.length;
+  $('tile-learned').textContent = patterns.filter((pattern) => pattern.trusted).length.toLocaleString();
   $('learning-location').textContent = `${patterns.length.toLocaleString()} learned change${patterns.length === 1 ? '' : 's'}. Stored only on this device; never uploaded or written to logs.`;
 }
 
@@ -275,13 +293,46 @@ async function addDictionaryWordFromInput() {
 $('dictionary-add').addEventListener('click', addDictionaryWordFromInput);
 $('dictionary-input').addEventListener('keydown', (event) => { if (event.key === 'Enter') void addDictionaryWordFromInput(); });
 
-document.querySelectorAll('[data-page]').forEach((button) => button.addEventListener('click', () => {
-  document.querySelectorAll('[data-page]').forEach((item) => item.classList.toggle('active', item === button));
-  for (const page of ['live', 'home', 'settings']) $( `${page}-page`).classList.toggle('hidden', button.dataset.page !== page);
-  $('page-label').textContent = { live: 'Live writing', home: 'Overview', settings: 'Settings' }[button.dataset.page];
-}));
-$('shortcut-chip').addEventListener('click', () => document.querySelector('[data-page="settings"]').click());
-$('gemini-settings-button').addEventListener('click', () => document.querySelector('[data-page="settings"]').click());
+const PAGES = {
+  live: { title: 'Home', subtitle: 'Spelling and grammar help in every app you write in.' },
+  settings: { title: 'Settings', subtitle: 'Suggestions, writing, privacy, AI and updates.' },
+};
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((tab) => {
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.toggle('hidden', panel.dataset.panel !== name));
+}
+function showPage(page, tab) {
+  document.querySelectorAll('[data-page]').forEach((item) => item.classList.toggle('active', item.dataset.page === page));
+  for (const name of Object.keys(PAGES)) $(`${name}-page`).classList.toggle('hidden', name !== page);
+  $('page-label').textContent = PAGES[page].title;
+  $('page-subtitle').textContent = PAGES[page].subtitle;
+  if (tab) showTab(tab);
+}
+document.querySelectorAll('[data-page]').forEach((button) => button.addEventListener('click', () => showPage(button.dataset.page)));
+document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
+document.querySelector('.tabs').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  const tabs = [...document.querySelectorAll('.tab')];
+  const index = tabs.findIndex((tab) => tab.classList.contains('active'));
+  const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+  showTab(next.dataset.tab);
+  next.focus();
+});
+$('shortcut-chip').addEventListener('click', () => { showPage('settings', 'general'); $('shortcut-input').focus(); });
+$('gemini-settings-button').addEventListener('click', () => $('gemini-key-input').focus());
+async function setTheme(value) {
+  try { await requireApi('setTheme')(value); }
+  catch (error) { showNotice(error.message, true); }
+}
+$('theme-button').addEventListener('click', () => {
+  const order = ['system', 'light', 'dark'];
+  void setTheme(order[(order.indexOf(current?.theme || 'system') + 1) % order.length]);
+});
+document.querySelectorAll('input[name="theme"]').forEach((input) => input.addEventListener('change', () => { if (input.checked) void setTheme(input.value); }));
 $('provider-select').addEventListener('change', async () => {
   try { await requireApi('updateProvider')($('provider-select').value); showNotice('AI provider updated.', true); }
   catch (error) { showNotice(error.message, true); }

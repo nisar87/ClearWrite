@@ -1146,7 +1146,13 @@ async function writeToMonitoredField(kind, replacement, expected) {
   try {
     // The helper verifies the field and its text, selects it whole, confirms the selection by
     // copying it, pastes, and restores the user's clipboard.
-    await replaceFieldInWindow({ target: snapshot.target, runtimeId: snapshot.runtimeId, expected, replacement });
+    try {
+      const result = await replaceFieldInWindow({ target: snapshot.target, runtimeId: snapshot.runtimeId, expected, replacement });
+      startup(`field ${kind} done (app=${snapshot.processName || 'unknown'}, reader=${snapshot.reader || 'value'}, ${result.detail || ''})`);
+    } catch (error) {
+      startup(`field ${kind} failed (app=${snapshot.processName || 'unknown'}, reader=${snapshot.reader || 'value'}, ${error.detail || 'no detail'})`);
+      throw error;
+    }
     completePendingWrite();
   } catch (error) {
     if (pendingWrite && !pendingWrite.done) pendingWrite = undefined;

@@ -65,3 +65,19 @@ would need a separate DevKit permission or a build without that component.
 
 Never upload release/staging-* directories or development data. Release artifacts
 belong in GitHub Releases, not Git history. Never share your data or dictionary.
+
+## Automatic releases
+
+`.github/workflows/release.yml` publishes a GitHub Release for every change that reaches `main`
+(and on demand from the Actions tab). It runs the syntax check, unit tests, Windows input
+integration tests and benchmark gates, then builds, verifies and smoke-tests the installer, and
+only then publishes. The version continues the prerelease line in `package.json` after the
+highest published tag (for example 0.2.0-beta.3 is followed by 0.2.0-beta.4), so installed
+copies see a newer version and offer it in Settings > Updates; download and installation
+always ask first. Release assets: setup, blockmap, ZIP, `beta.yml` (or `latest.yml`),
+`SHA256SUMS.txt` and `GETTING-STARTED.md`.
+
+Automatic builds do not include the optional ChatGPT DevKit (`CLEARWRITE_DIST_WITHOUT_CHATGPT=1`).
+An installed copy that had ChatGPT sign-in loses it when it updates to an automatic build.
+Publish a DevKit-included release manually, as above, if ChatGPT sign-in must be kept.
+

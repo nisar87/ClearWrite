@@ -1,0 +1,16 @@
+{
+  "minimum": {
+    "spellingSelected": 11,
+    "grammarExact": 42,
+    "holdoutExact": 27,
+    "holdoutDetected": 28
+  },
+  "maximum": {
+    "spellingWrong": 0,
+    "grammarWrongChanges": 0,
+    "holdoutWrongChanges": 0,
+    "cleanChanged": 0,
+    "cleanFindings": 0,
+    "shortTextP95Ms": 150
+  }
+}

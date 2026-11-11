@@ -1,157 +1,147 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
-const execFileAsync = promisify(execFile);
+// Client for the long-running input helper (src/input-helper.ps1 + input-helper.cs). The helper
+// is started on first use (or by warmWindowsInput) and reused, so actions do not pay for a new
+// PowerShell process and C# compilation each time. All clipboard work happens in the helper,
+// which snapshots and restores every clipboard format.
 const powershell = process.env.SystemRoot
   ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
   : 'powershell.exe';
+const helperPath = fileURLToPath(new URL('./input-helper.ps1', import.meta.url));
+const STARTUP_TIMEOUT_MS = 20_000;
+const REQUEST_TIMEOUT_MS = 12_000;
 
-const helper = String.raw`
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class ClearWriteInput {
-  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION { [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public MOUSEINPUT mi; }
-  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION U; }
-  [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern IntPtr SetActiveWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr processId);
-  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
-  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
-  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
-  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
-  // Physical pixels on every monitor, so ClearWrite can convert to Electron DIPs correctly.
-  public static void UsePhysicalPixels() { try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { } }
-  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
-  public static void Chord(ushort key) {
-    var started = Environment.TickCount;
-    while (IsDown(0x10) || IsDown(0x11) || IsDown(0x12) || IsDown(0x5B) || IsDown(0x5C)) {
-      if (unchecked(Environment.TickCount - started) > 2000) throw new InvalidOperationException("Release Ctrl, Shift, and Alt, then try again.");
-      System.Threading.Thread.Sleep(25);
-    }
-    var inputs = new INPUT[4];
-    inputs[0] = Key(0x11, 0); inputs[1] = Key(key, 0); inputs[2] = Key(key, 2); inputs[3] = Key(0x11, 2);
-    var inserted = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-    if (inserted != (uint)inputs.Length) throw new InvalidOperationException("Windows rejected simulated keyboard input (" + inserted + "/" + inputs.Length + " events; error " + Marshal.GetLastWin32Error() + ").");
-  }
-  static bool IsDown(int key) { return (GetAsyncKeyState(key) & 0x8000) != 0; }
-  public static void KeyPress(ushort key) {
-    var inputs = new INPUT[2];
-    inputs[0] = Key(key, 0); inputs[1] = Key(key, 2);
-    var inserted = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-    if (inserted != (uint)inputs.Length) throw new InvalidOperationException("Windows rejected simulated keyboard input (" + inserted + "/" + inputs.Length + " events; error " + Marshal.GetLastWin32Error() + ").");
-  }
-  public static bool Activate(IntPtr target) {
-    var foreground = GetForegroundWindow();
-    var foregroundThread = GetWindowThreadProcessId(foreground, IntPtr.Zero);
-    var targetThread = GetWindowThreadProcessId(target, IntPtr.Zero);
-    var currentThread = GetCurrentThreadId();
-    var attachedForeground = foregroundThread != currentThread && AttachThreadInput(currentThread, foregroundThread, true);
-    var attachedTarget = targetThread != currentThread && AttachThreadInput(currentThread, targetThread, true);
-    try {
-      if (IsIconic(target)) ShowWindow(target, 9);
-      BringWindowToTop(target);
-      SetActiveWindow(target);
-      return SetForegroundWindow(target);
-    } finally {
-      if (attachedTarget) AttachThreadInput(currentThread, targetThread, false);
-      if (attachedForeground) AttachThreadInput(currentThread, foregroundThread, false);
-    }
-  }
-  static INPUT Key(ushort key, uint flags) { var input = new INPUT(); input.type = 1; input.U.ki.wVk = key; input.U.ki.dwFlags = flags; return input; }
-}
-"@
-switch ($env:CLEARWRITE_ACTION) {
-  'validate' {
-    $size = [Runtime.InteropServices.Marshal]::SizeOf([type][ClearWriteInput+INPUT])
-    $expected = if ([IntPtr]::Size -eq 8) { 40 } else { 28 }
-    if ($size -ne $expected) { throw "Unexpected native INPUT size: $size (expected $expected)." }
-    'ok'
-  }
-  'capture' {
-    [ClearWriteInput]::UsePhysicalPixels()
-    $target = [ClearWriteInput]::GetForegroundWindow().ToInt64()
-    $before = [ClearWriteInput]::GetClipboardSequenceNumber()
-    $point = New-Object ClearWriteInput+POINT
-    [void][ClearWriteInput]::GetCursorPos([ref]$point)
-    [ClearWriteInput]::Chord(0x43)
-    Start-Sleep -Milliseconds 180
-    $after = [ClearWriteInput]::GetClipboardSequenceNumber()
-    [pscustomobject]@{ target = $target; before = $before; after = $after; x = $point.X; y = $point.Y } | ConvertTo-Json -Compress
-  }
-  'paste' {
-    $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
-    if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
-    Start-Sleep -Milliseconds 180
-    [ClearWriteInput]::Chord(0x56)
-    'ok'
-  }
-  'replace-field' {
-    $target = [IntPtr]::new([long]$env:CLEARWRITE_TARGET)
-    if ([ClearWriteInput]::GetForegroundWindow() -ne $target -and -not [ClearWriteInput]::Activate($target)) { throw 'The original app could not be focused.' }
-    Start-Sleep -Milliseconds 180
-    if ([ClearWriteInput]::GetForegroundWindow() -ne $target) { throw 'The original app is no longer active. Nothing was replaced.' }
-    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-    if ($null -eq $focused) { throw 'The original text field is no longer focused. Nothing was replaced.' }
-    $runtimeId = [string]::Join('.', $focused.GetRuntimeId())
-    if ($runtimeId -cne $env:CLEARWRITE_RUNTIME_ID) { throw 'The focused text field changed. Nothing was replaced.' }
-    $valuePattern = $null
-    if (-not $focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern) -or $valuePattern.Current.IsReadOnly) { throw 'This text field cannot be safely replaced.' }
-    if ($valuePattern.Current.Value -cne $env:CLEARWRITE_EXPECTED_TEXT) { throw 'The text changed since this suggestion was created. Nothing was replaced.' }
-    [ClearWriteInput]::Chord(0x41)
-    Start-Sleep -Milliseconds 80
-    [ClearWriteInput]::Chord(0x56)
-    'ok'
-  }
-  default { throw 'Unknown input action.' }
-}
-`;
+let helper;
+let nextId = 1;
 
-async function run(action, target, expectedText, runtimeId) {
-  const { stdout } = await execFileAsync(powershell, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', helper,
-  ], {
+const b64 = (value) => (value ? Buffer.from(String(value), 'utf8').toString('base64') : '-');
+const unb64 = (value) => Buffer.from(String(value || ''), 'base64').toString('utf8');
+
+function startHelper() {
+  const child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Mta', '-ExecutionPolicy', 'Bypass', '-File', helperPath], {
     windowsHide: true,
-    timeout: 8000,
-    maxBuffer: 16_000,
-    env: { ...process.env, CLEARWRITE_ACTION: action, CLEARWRITE_TARGET: String(target ?? ''), CLEARWRITE_EXPECTED_TEXT: expectedText ?? '', CLEARWRITE_RUNTIME_ID: runtimeId ?? '' },
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
-  return stdout.trim();
+  const state = { child, pending: new Map(), ready: undefined };
+  state.ready = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { reject(new Error('The Windows input helper did not start.')); child.kill(); }, STARTUP_TIMEOUT_MS);
+    state.resolveReady = () => { clearTimeout(timer); resolve(); };
+    state.rejectReady = (error) => { clearTimeout(timer); reject(error); };
+  });
+  state.ready.catch(() => {});
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-2000); });
+  createInterface({ input: child.stdout }).on('line', (line) => {
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    if (message.ready) { state.resolveReady(); return; }
+    const request = state.pending.get(message.id);
+    if (!request) return;
+    state.pending.delete(message.id);
+    clearTimeout(request.timer);
+    if (message.ok) request.resolve(message);
+    else request.reject(new Error(unb64(message.error) || 'The Windows input action failed.'));
+  });
+  const fail = (error) => {
+    if (helper === state) helper = undefined;
+    state.rejectReady(error);
+    for (const request of state.pending.values()) { clearTimeout(request.timer); request.reject(error); }
+    state.pending.clear();
+  };
+  child.on('error', fail);
+  child.on('exit', (code) => fail(new Error(code === 0 ? 'The Windows input helper stopped.' : `The Windows input helper stopped unexpectedly.${stderr.includes('Exception') ? ' Check that Windows PowerShell and .NET Framework are available.' : ''}`)));
+  child.stdin.on('error', () => {});
+  return state;
 }
 
-export async function captureSelection() {
-  const raw = await run('capture');
-  const result = JSON.parse(raw);
-  if (!Number.isSafeInteger(result.target) || !Number.isSafeInteger(result.before) || !Number.isSafeInteger(result.after)) {
-    throw new Error('Windows returned an invalid selection status.');
-  }
-  return result;
+async function request(action, target = 0, fields = []) {
+  helper ??= startHelper();
+  const state = helper;
+  await state.ready;
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      state.pending.delete(id);
+      reject(new Error('Windows did not complete the action in time. Nothing else was changed.'));
+      // A stuck helper is replaced on the next request.
+      state.child.kill();
+    }, REQUEST_TIMEOUT_MS);
+    state.pending.set(id, { resolve, reject, timer });
+    state.child.stdin.write(`${id} ${action} ${Number(target) || 0} ${fields.map(b64).join(' ')}\n`);
+  });
+}
+
+export function warmWindowsInput() {
+  helper ??= startHelper();
+  return helper.ready;
+}
+
+export function stopWindowsInput() {
+  const state = helper;
+  helper = undefined;
+  if (!state) return;
+  try { state.child.stdin.end(); } catch { /* already closed */ }
+  setTimeout(() => { if (state.child.exitCode === null) state.child.kill(); }, 3000).unref();
 }
 
 export async function validateWindowsInput() {
-  return (await run('validate')) === 'ok';
+  return (await request('validate')).ok === true;
 }
 
-export async function pasteToWindow(target) {
+// Copies the current selection in the foreground app and restores the user's clipboard.
+// Returns { target, copied, text, x, y }: copied is false when nothing was selected.
+export async function captureSelection() {
+  const result = await request('capture');
+  if (!Number.isSafeInteger(result.target)) throw new Error('Windows returned an invalid selection status.');
+  return { target: result.target, copied: result.copied === true, text: unb64(result.text), x: result.x, y: result.y };
+}
+
+// Replaces the selection in `target` with `replacement`, only if the selection still equals
+// `expected` (re-copied and compared just before pasting).
+export async function replaceSelectionInWindow({ target, expected, replacement }) {
   if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text window is no longer available.');
-  await run('paste', target);
+  if (typeof expected !== 'string' || typeof replacement !== 'string') throw new Error('Nothing to replace.');
+  await request('replace-selection', target, ['', expected, replacement]);
 }
 
-export async function replaceFieldInWindow(target, expectedText, runtimeId) {
+// Replaces the whole verified field (`runtimeId`, value exactly `expected`) with `replacement`.
+export async function replaceFieldInWindow({ target, runtimeId, expected, replacement }) {
   if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text field is no longer available.');
-  if (typeof expectedText !== 'string' || typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
-  await run('replace-field', target, expectedText, runtimeId);
+  if (typeof expected !== 'string' || typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
+  await request('replace-field', target, [runtimeId, expected, replacement]);
 }
 
+// Replaces individual spans inside a rich editor, leaving the rest of the document untouched.
+// spans: [{ before, original, after, replacement }] in document order. Returns
+// { applied, total, problem }: spans after the first one that cannot be verified are skipped.
+export async function replaceSpansInWindow({ target, runtimeId, spans }) {
+  if (!Number.isSafeInteger(target) || target <= 0) throw new Error('The original text field is no longer available.');
+  if (typeof runtimeId !== 'string' || !runtimeId) throw new Error('The original text field could not be verified.');
+  if (!Array.isArray(spans) || !spans.length) throw new Error('There are no changes to apply.');
+  const forbidden = /[\u0001\u0002]/;
+  if (spans.some((span) => [span.before, span.original, span.after, span.replacement].some((value) => typeof value !== 'string' || forbidden.test(value)) || !span.original)) {
+    throw new Error('These changes cannot be applied here. Use Copy instead.');
+  }
+  // Last to first, so applying one change never moves the text of the next.
+  const payload = [...spans].reverse().map((span) => [span.before, span.original, span.after, span.replacement].join('\u0001')).join('\u0002');
+  const result = await request('replace-spans', target, [runtimeId, payload]);
+  return { applied: result.applied, total: result.total, problem: unb64(result.problem) };
+}
+
+// Screen rectangles (physical pixels, [x, y, width, height]) of each span's original words in the
+// focused editor of `target`. spans: [{ before, original, after }]. Read-only. A span that cannot
+// be located exactly returns an empty list.
+export async function wordBoundsInWindow({ target, runtimeId, spans }) {
+  if (!Number.isSafeInteger(target) || target <= 0 || typeof runtimeId !== 'string' || !runtimeId) return spans.map(() => []);
+  const forbidden = /[\u0001\u0002]/;
+  const usable = spans.map((span) => [span.before, span.original, span.after].every((value) => typeof value === 'string' && !forbidden.test(value)) && span.original);
+  const payload = spans.filter((_, index) => usable[index]).map((span) => [span.before, span.original, span.after].join('\u0001')).join('\u0002');
+  if (!payload) return spans.map(() => []);
+  const result = await request('word-bounds', target, [runtimeId, payload]);
+  const bounds = Array.isArray(result.bounds) ? result.bounds : [];
+  let next = 0;
+  return spans.map((_, index) => (usable[index] ? (bounds[next++] || []) : []));
+}

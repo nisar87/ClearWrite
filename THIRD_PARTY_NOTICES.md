@@ -33,6 +33,12 @@ ClearWrite's own source code is licensed under the MIT License (see `LICENSE`). 
 - Modifications by ClearWrite: retain 30,000 frequent ASCII words of 2-24 letters, retain word pairs whose words are in that vocabulary and count is at least 50, and gzip the resulting JSON. No endorsement by the data creators is implied. Keep the model, manifest, attribution and license files together when redistributing.
 - Model rebuilding explicitly downloads upstream data during development only. Runtime proofreading never downloads data or sends user text to these sources.
 
+## On-device grammar model and runtime
+
+- Model: `gec-t5-tiny`, an int8 ONNX export ([rabden/t5-tiny-gec-hone](https://huggingface.co/rabden/t5-tiny-gec-hone), MIT) of [visheratin/t5-efficient-tiny-grammar-correction](https://huggingface.co/visheratin/t5-efficient-tiny-grammar-correction) (MIT), itself trained on a subset of Google's C4_200M synthetic grammatical-error-correction data. Pinned revision and SHA-256 of every file: `assets/models/grammar-model.json`. Downloaded at build time by `scripts/fetch-grammar-model.js`; the app never downloads it at runtime and sends nothing anywhere.
+- Runtime: Transformers.js (`@huggingface/transformers`, Apache License 2.0), ONNX Runtime (`onnxruntime-node`, `onnxruntime-web`, MIT) and their dependencies, including sharp (Apache License 2.0, with libvips under LGPL-3.0 in its platform package). License texts are installed with each package.
+- Use in ClearWrite: suggests sentence-level grammar fixes on the device. Only one-word substitutions supported by the bundled word-pair statistics and sentence-start capitalisation are offered; see `src/model-filter.js`.
+
 ## Other npm dependencies
 
 `electron-updater` 6.8.11 (MIT), from electron-userland/electron-builder,

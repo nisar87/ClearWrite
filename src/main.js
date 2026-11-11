@@ -5,19 +5,24 @@ import { createMonitorWatchdog } from './monitor-watchdog.js';
 import { listGeminiModels, streamGemini } from './gemini.js';
 import { MAX_LIVE_DRAFT_LENGTH, prepareLiveDraft, isReadyForLiveProofread, hasProofreadableProse, isUserEditSnapshot, isEligibleMonitorField, isBrowserAddressField, protectUrls, restoreUrls, appendContinuation, preserveOuterWhitespace, matchLineEndings, isSafeCorrection } from './live-proofread.js';
 import { DEFAULT_EXCLUDED_PROCESSES, isMonitoringActive, isRemoteSessionApp, isProcessAllowed, monitoringPauseDeadline, normalizeProcessNames } from './monitoring.js';
-import { AI_REVIEW_TIMEOUT_MS, LIVE_ACTIONS, MANUAL_ACTIONS, REVIEW_DEBOUNCE_MS, createDebouncer, createMonitorSession, createReviewCache, isCurrentRevision, monitorView, transitionMonitorSession } from './monitor-session.js';
+import { AI_REVIEW_TIMEOUT_MS, LIVE_ACTIONS, MANUAL_ACTIONS, REVIEW_DEBOUNCE_MS, createDebouncer, createMonitorSession, createReviewCache, isCurrentRevision, monitorView, supportsSpanApply, transitionMonitorSession } from './monitor-session.js';
 import { createPanelLifecycle, needsTopmostRepair, panelWindowOps, PINNED_TOPMOST_LEVEL, reducePanel } from './panel-lifecycle.js';
 import { PANEL_DEFAULT_HEIGHT, PANEL_DEFAULT_WIDTH, PANEL_MIN_HEIGHT, PANEL_MIN_WIDTH, boundsFromPlacement, displayForRect, migratePanelPreferences, placementFromBounds, resolvePanelBounds } from './panel-position.js';
 import { createShortcutRegistrar } from './shortcut.js';
 import { configureLocalProofreader, proofreadLocally, stopLocalProofreader } from './local-proofread.js';
 import { actionRequiresAi, createProofreadingRouter, ENGLISH_DIALECTS, migrateProofreadingPreferences, normalizeEnglishDialect, normalizeProofreadingMode, OfflineModeError } from './proofreading-mode.js';
 import { createPersonalDictionary } from './personal-dictionary.js';
+import { applyLearning, createLearningMemory } from './learning-memory.js';
+import { clarityHints } from './clarity-hints.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { captureSelection, pasteToWindow, replaceFieldInWindow } from './windows-input.js';
+import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput, wordBoundsInWindow } from './windows-input.js';
+import { reviewAiCorrection, rewriteWarning } from './ai-changes.js';
+import { correctByParagraph, createParagraphCache } from './paragraph-review.js';
+import { chooseOption, chosenEdits, composeText, hasEdits, spansForEdits, underlineLayout, underlineLocators, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.CLEARWRITE_DATA_DIR || (app.isPackaged
@@ -60,6 +65,9 @@ let pendingWrite;
 let monitorEditedResult;
 const reviewCache = createReviewCache();
 const reviewDebouncer = createDebouncer(REVIEW_DEBOUNCE_MS);
+const LOCAL_CHECK_PIECE_LENGTH = 6000;
+// AI corrections per paragraph, so unchanged paragraphs are not sent again (see paragraph-review.js).
+const paragraphCache = createParagraphCache();
 
 // Manual (selection + shortcut) session.
 let manual;
@@ -101,7 +109,13 @@ let state = {
   proofreadingMode: 'offline',
   englishDialect: 'american',
   englishDialects: ENGLISH_DIALECTS,
+  // AI-assisted mode: 'unsure' sends only paragraphs the on-device layers could not settle;
+  // 'all' sends every changed paragraph.
+  aiReviewScope: 'unsure',
+  // Wavy underlines drawn under findings in editors that report word positions.
+  showUnderlines: true,
   dictionaryWords: [],
+  learnedPatterns: [],
   dictionaryLocation: '',
   providerChecked: false,
   modeNotice: '',
@@ -120,6 +134,8 @@ const router = createProofreadingRouter({
 // the repository. It is only passed to the on-device checker and never logged.
 const dictionaryDir = process.env.CLEARWRITE_DICTIONARY_DIR || path.join(app.getPath('appData'), 'ClearWrite');
 const personalDictionary = createPersonalDictionary(dictionaryDir);
+// Personal learning: stored next to the dictionary, on this device only (learning-memory.js).
+const learningMemory = createLearningMemory(dictionaryDir);
 
 // ChatGPT sign-in comes from the optional Sign in with ChatGPT DevKit (@siwc/local). It is
 // loaded lazily so ClearWrite installs and runs without it: Offline only and Gemini work, and
@@ -165,35 +181,6 @@ async function initChatGPT() {
     },
   });
   state.chatgptAvailable = true;
-}
-
-function readClipboardSnapshot() {
-  const formats = clipboard.availableFormats();
-  const snapshot = {};
-  try { if (formats.includes('text/plain')) snapshot.text = clipboard.readText(); } catch { }
-  try { if (formats.includes('text/html')) snapshot.html = clipboard.readHTML(); } catch { }
-  try { if (formats.includes('text/rtf')) snapshot.rtf = clipboard.readRTF(); } catch { }
-  try { if (formats.some((format) => format.startsWith('image/'))) snapshot.image = clipboard.readImage(); } catch { }
-  if (formats.length === 0) return null;
-  return snapshot;
-}
-
-function restoreClipboard(snapshot) {
-  if (!snapshot || !Object.keys(snapshot).length) clipboard.clear();
-  else clipboard.write(snapshot);
-}
-
-// Puts `text` on the clipboard for a paste, then restores the user's clipboard if nothing
-// else has replaced it in the meantime.
-async function withTemporaryClipboard(text, operation) {
-  const snapshot = readClipboardSnapshot();
-  clipboard.writeText(text);
-  try { return await operation(); }
-  finally {
-    setTimeout(() => {
-      try { if (clipboard.readText() === text) restoreClipboard(snapshot); } catch { /* Keep the pasted text. */ }
-    }, 1200);
-  }
 }
 
 let lastPublishedMonitorStatus = '';
@@ -532,7 +519,7 @@ function keepPanelReachable() {
 
 function safeSender(event) {
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (![mainWindow, assistantWindow].includes(win) || !event.senderFrame?.url.startsWith('file://')) throw new Error('This action is only available inside ClearWrite.');
+  if (![mainWindow, assistantWindow, underlineWindow].includes(win) || !event.senderFrame?.url.startsWith('file://')) throw new Error('This action is only available inside ClearWrite.');
 }
 
 function handle(channel, fn) {
@@ -621,6 +608,7 @@ function companionView() {
   if (pendingWrite) { view.canApply = false; view.canUndo = false; view.statusLine = pendingWrite.kind === 'undo' ? 'Undoing…' : 'Applying…'; }
   if (view.status === 'working' && monitorAction?.revision === monitorSession.revision) view.statusLine = `${monitorAction.label} with ${providerName()}…`;
   if (pendingWrite || !isReviewableText(view.text)) view.actions = [];
+  if (view.suggestion && view.text) view.hints = clarityHints(view.text);
   return view;
 }
 
@@ -645,13 +633,127 @@ function manualView() {
     findings: manual.findings || [],
     note: manual.note || '',
     needsChoice: manual.needsChoice || 0,
+    hints: done ? clarityHints(manual.text) : [],
     connected: router.canUseAi(),
     provider: state.provider,
     providerName: providerName(),
   };
 }
 
+// ---------------------------------------------------------------------------
+// Underlines in the editor (Phase 6). A transparent, click-through, never-focused window draws
+// wavy lines under the current suggestion's findings, at word rectangles the input helper reads
+// through UI Automation. Hovering a line makes it clickable; a click opens the panel at that
+// finding. Lines are re-measured while visible (scrolling, moving) and removed on any edit.
+// ---------------------------------------------------------------------------
+let underlineWindow;
+let underlineTimer;
+let underlineBusy = false;
+let underlineKey = '';
+const UNDERLINE_REFRESH_MS = 900;
+
+function underlineTarget() {
+  if (!state.showUnderlines || !monitoringActive() || panel.mode === 'manual' || pendingWrite) return null;
+  if (monitorSession.phase !== 'suggestion') return null;
+  const snapshot = monitorSession.snapshot;
+  const suggestion = monitorSession.suggestion;
+  if (!snapshot?.runtimeId || !['value', 'text'].includes(snapshot.reader) || !hasEdits(suggestion?.findings)) return null;
+  const locators = underlineLocators(monitorSession.text, suggestion.findings);
+  if (!locators.length) return null;
+  return { snapshot, findings: suggestion.findings, locators, key: `${monitorSession.revision}|${suggestion.findings.map((finding) => `${finding.choice}${finding.ignored ? 'i' : ''}`).join(',')}` };
+}
+
+// The overlay only takes clicks while the pointer is over an underline. Every hide and show
+// resets it to click-through, so it can never be left catching clicks meant for the editor.
+function setUnderlinesClickThrough() {
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.setIgnoreMouseEvents(true, { forward: true });
+}
+
+function hideOverlay() {
+  setUnderlinesClickThrough();
+  if (underlineWindow && !underlineWindow.isDestroyed() && underlineWindow.isVisible()) underlineWindow.hide();
+}
+
+function hideUnderlines() {
+  clearInterval(underlineTimer);
+  underlineTimer = undefined;
+  underlineKey = '';
+  hideOverlay();
+}
+
+function ensureUnderlineWindow() {
+  if (underlineWindow && !underlineWindow.isDestroyed()) return underlineWindow;
+  underlineWindow = new BrowserWindow({
+    show: false, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+    focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, backgroundColor: '#00000000',
+    webPreferences: { preload: path.join(root, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: false, spellcheck: false },
+  });
+  underlineWindow.setAlwaysOnTop(true, 'pop-up-menu');
+  underlineWindow.setIgnoreMouseEvents(true, { forward: true });
+  void underlineWindow.loadFile(path.join(root, '../public/underlines.html'));
+  return underlineWindow;
+}
+
+async function measureUnderlines() {
+  const target = underlineTarget();
+  if (!target) { hideUnderlines(); return; }
+  if (underlineBusy) return;
+  underlineBusy = true;
+  try {
+    const bounds = await wordBoundsInWindow({ target: target.snapshot.target, runtimeId: target.snapshot.runtimeId, spans: target.locators });
+    // The text or suggestion may have changed while measuring.
+    const current = underlineTarget();
+    if (!current || current.key !== target.key) return;
+    const items = target.locators.map((locator, position) => ({
+      index: locator.index,
+      kind: target.findings[locator.index].kind || '',
+      rects: (bounds[position] || []).map(([x, y, width, height]) => {
+        const dip = screen.screenToDipRect(null, { x, y, width, height });
+        return [dip.x, dip.y, dip.width, dip.height];
+      }),
+    }));
+    const layout = underlineLayout(items);
+    if (!layout) { hideOverlay(); return; }
+    const win = ensureUnderlineWindow();
+    win.setBounds(layout.bounds);
+    win.webContents.send('underlines:state', { items: layout.items });
+    if (!win.isVisible()) { setUnderlinesClickThrough(); win.showInactive(); }
+  } catch {
+    hideOverlay();
+  } finally {
+    underlineBusy = false;
+  }
+}
+
+function scheduleUnderlines() {
+  const target = underlineTarget();
+  if (!target) { hideUnderlines(); return; }
+  if (target.key !== underlineKey) {
+    underlineKey = target.key;
+    hideOverlay();
+    void measureUnderlines();
+  }
+  underlineTimer ??= setInterval(() => { void measureUnderlines(); }, UNDERLINE_REFRESH_MS);
+}
+
+async function openUnderline(index) {
+  if (!Number.isSafeInteger(index)) return;
+  setUnderlinesClickThrough();
+  await restorePanel();
+  publishAssistantView({ focusFinding: index });
+}
+
+async function setShowUnderlines(enabled) {
+  if (typeof enabled !== 'boolean') throw new Error('Choose whether to show underlines.');
+  state.showUnderlines = enabled;
+  if (!enabled) hideUnderlines();
+  await savePreferences();
+  publishState();
+  scheduleUnderlines();
+}
+
 function publishAssistantView(extra = {}) {
+  scheduleUnderlines();
   const view = panel.mode === 'manual' && manual ? manualView() : companionView();
   lastAssistantView = {
     ...view,
@@ -780,29 +882,136 @@ function handleFocusSnapshot(snapshot) {
   publishAssistantView();
 }
 
+async function proofreadPiece(text) {
+  const protectedDraft = protectUrls(text);
+  const review = await proofreadLocally(protectedDraft.input);
+  const findings = mapFindingsFromProtected(review.findings, protectedDraft);
+  return { ...review, findings, correctedText: review.supported ? restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) : '' };
+}
+
+// The on-device checker takes up to 6,000 characters per request. Longer selections are
+// checked piece by piece at paragraph (or sentence) boundaries and the findings merged, so
+// Correct works on long documents without sending anything off the device.
 async function proofreadMonitorText(text) {
   try {
-    const protectedDraft = protectUrls(text);
-    const review = await proofreadLocally(protectedDraft.input);
-    return { ...review, correctedText: review.supported ? restoreUrls(review.correctedText || protectedDraft.input, protectedDraft) : '' };
+    const pieces = splitForChecking(text, LOCAL_CHECK_PIECE_LENGTH);
+    if (pieces.length === 1) return await proofreadPiece(text);
+    const findings = [];
+    const reasons = new Set();
+    let supported = false;
+    for (const piece of pieces) {
+      if (!piece.text.trim()) continue;
+      const review = await proofreadPiece(piece.text);
+      if (review.reason) reasons.add(review.reason);
+      if (!review.supported) continue;
+      supported = true;
+      findings.push(...offsetFindings(review.findings, piece.start));
+    }
+    if (supported && !hasEdits(findings) && findings.length) throw new Error('The on-device check returned an unexpected result.');
+    return { supported, findings, correctedText: supported ? composeText(text, findings) : '', reason: [...reasons].join(' ') };
   } catch (error) {
     return { supported: false, correctedText: '', findings: [], reason: error.message || 'On-device check unavailable.', error: true };
   }
 }
 
+// "Only when unsure": a paragraph goes to the AI when the on-device check skipped it or left a
+// finding in it unresolved (several options, none pre-selected).
+function isUnsure(local, start, end) {
+  if (!local.supported) return true;
+  return (local.findings || []).some((finding) => !finding.ignored && !(finding.choice >= 0) && finding.start < end && finding.end > start);
+}
+
+// AI changes for the paragraphs that were sent, on-device findings for the rest.
+function mergeScoped(text, ai, local, sentRanges) {
+  const inside = (finding) => sentRanges.some(([start, end]) => finding.start < end && finding.end > start);
+  const findings = [
+    ...ai.findings.filter(inside),
+    ...(local?.findings || []).filter((finding) => Array.isArray(finding.edits) && !inside(finding)),
+  ].sort((a, b) => a.start - b.start);
+  return {
+    source: 'ai',
+    sourceLabel: `${providerName()} + on-device check`,
+    text: composeText(text, findings),
+    findings,
+    needsChoice: unresolvedCount(findings),
+    note: ai.note,
+  };
+}
+
+// An AI correction split into individual changes. Changes to numbers, negation or names are
+// listed but not applied until the writer accepts them (see ai-changes.js).
+function aiCorrection(text, output) {
+  const review = reviewAiCorrection(text, output);
+  return {
+    text: review.text,
+    findings: review.findings,
+    needsChoice: unresolvedCount(review.findings),
+    note: review.flagged ? `${review.flagged} change${review.flagged === 1 ? '' : 's'} could alter your meaning and ${review.flagged === 1 ? 'was' : 'were'} not applied. Review ${review.flagged === 1 ? 'it' : 'them'} below.` : '',
+  };
+}
+
+// Applies what this writer has taught ClearWrite to a suggestion made of individual findings:
+// changes they always make are added, suggestions they always ignore are shown as ignored.
+function withLearning(text, suggestion) {
+  if (!suggestion || suggestion.supported === false || !Array.isArray(suggestion.findings)) return suggestion;
+  if (suggestion.findings.length && !hasEdits(suggestion.findings)) return suggestion;
+  if (suggestion.action && suggestion.action !== 'correct') return suggestion;
+  const result = applyLearning(text, suggestion.findings, learningMemory.patterns());
+  if (!result.learned && !result.suppressed) return suggestion;
+  return { ...suggestion, findings: result.findings, text: composeText(text, result.findings), needsChoice: unresolvedCount(result.findings) };
+}
+
+// The writer committed a suggestion (Apply, Replace or Copy): remember their decisions.
+function learnFrom(text, findings, edited = false) {
+  if (edited || !hasEdits(findings)) return;
+  void learningMemory.record(text, findings).then((changed) => {
+    if (changed) { state.learnedPatterns = learningMemory.list(); publishState(); }
+  }).catch(() => { /* Learning is optional; a write failure never blocks the user. */ });
+}
+
 function localSuggestion(text, review, note = '') {
   if (review.error) return null;
-  const corrected = review.supported ? matchLineEndings(text, preserveOuterWhitespace(text, review.correctedText || text)) : text;
-  const findings = Array.isArray(review.findings) ? review.findings.map(({ message, original, suggestions, appliedLocally, kind }) => ({ message, original, suggestions, appliedLocally, kind: kind || '' })) : [];
+  const findings = Array.isArray(review.findings)
+    ? review.findings.map(({ message, original, suggestions, appliedLocally, kind, start, end, edits, choice }) => ({
+      message, original, suggestions, appliedLocally, kind: kind || '', start, end,
+      ...(Array.isArray(edits) ? { edits, choice: Number.isSafeInteger(choice) ? choice : -1, ignored: false } : {}),
+    }))
+    : [];
+  // Findings with exact edits are rebuilt from the original text, so each one can be
+  // accepted or ignored on its own. Older results without edits keep the whole-text form.
+  const corrected = !review.supported ? text
+    : hasEdits(findings) ? composeText(text, findings)
+      : matchLineEndings(text, preserveOuterWhitespace(text, review.correctedText || text));
   return {
     source: 'local',
     supported: review.supported,
     sourceLabel: 'On-device check',
     text: corrected,
     findings,
-    needsChoice: findings.filter((finding) => !finding.appliedLocally).length,
+    needsChoice: hasEdits(findings) ? unresolvedCount(findings) : findings.filter((finding) => !finding.appliedLocally).length,
     note: note || (!review.supported ? review.reason : ''),
   };
+}
+
+// The writer accepted an option, cleared a choice, or ignored one finding. Only that
+// finding changes; the suggested text is rebuilt from the original plus chosen options.
+function chooseFinding(index, option) {
+  if (panel.mode === 'manual' && manual) {
+    const selection = manual;
+    if (selection.status !== 'done' || !hasEdits(selection.findings)) throw new Error('There is no suggestion to adjust.');
+    const findings = chooseOption(selection.findings, index, option);
+    Object.assign(selection, { findings, result: composeText(selection.text, findings), needsChoice: unresolvedCount(findings), edited: false });
+    publishAssistantView();
+    return;
+  }
+  const phase = monitorSession.phase === 'away' ? monitorSession.phaseBeforeAway : monitorSession.phase;
+  const suggestion = monitorSession.suggestion;
+  if (phase !== 'suggestion' || !suggestion || !hasEdits(suggestion.findings)) throw new Error('There is no suggestion to adjust.');
+  const findings = chooseOption(suggestion.findings, index, option);
+  const next = { ...suggestion, findings, text: composeText(monitorSession.text, findings), needsChoice: unresolvedCount(findings) };
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision: monitorSession.revision, suggestion: next });
+  monitorEditedResult = undefined;
+  publishAssistantView();
 }
 
 function withTimeout(signal, ms) {
@@ -830,7 +1039,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
   const providerKey = useAi ? `${state.provider}:${state.selectedModel}` : 'local';
   const cached = force ? undefined : reviewCache.get(key, text);
   if (cached?.providerKey === providerKey) {
-    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: cached.suggestion });
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: withLearning(text, cached.suggestion) });
     publishAssistantView();
     dispatchPanel({ type: 'result' });
     return;
@@ -847,15 +1056,35 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
   try {
     // Offline only or localOnly: on-device. AI-assisted: provider via the gate, with the
     // on-device result as the fallback when the request fails (the mode is never changed).
+    // The on-device result is computed once: it is the fallback, and in the "only when unsure"
+    // scope it decides which paragraphs go to the provider.
+    const localResult = proofreadMonitorText(text);
+    let aiScope = null;
     const result = await router.correctWithFallback(text, {
-      proofreadLocal: proofreadMonitorText,
+      proofreadLocal: () => localResult,
       signal: withTimeout(controller.signal, AI_REVIEW_TIMEOUT_MS),
       cancelSignal: controller.signal,
       localOnly: !useAi,
+      correct: async (value, request) => {
+        let shouldSend;
+        if (state.aiReviewScope !== 'all') {
+          const local = await localResult;
+          shouldSend = local.error ? undefined : (start, end) => isUnsure(local, start, end);
+        }
+        const review = await correctByParagraph(value, { correct: request, cache: paragraphCache, cacheKey: providerKey, shouldSend });
+        aiScope = shouldSend ? review.sentRanges : null;
+        startup(`AI review (scope=${shouldSend ? 'unsure' : 'all'}, sent=${review.sent}, reused=${review.reused}, kept on device=${review.skipped}, chars=${review.sentCharacters})`);
+        return review.output;
+      },
     });
     if (controller.signal.aborted) return;
-    if (result.source === 'ai' && isSafeCorrection(text, result.output)) {
-      suggestion = { source: 'ai', sourceLabel: `${providerName()} suggestion`, text: result.output, findings: [], needsChoice: 0, note: '' };
+    if (result.source === 'ai' && aiScope && !aiScope.length) {
+      // Nothing needed the AI: the on-device result stands and nothing was sent.
+      suggestion = localSuggestion(text, await result.local, '');
+    } else if (result.source === 'ai' && isSafeCorrection(text, result.output)) {
+      suggestion = aiScope
+        ? mergeScoped(text, aiCorrection(text, result.output), localSuggestion(text, await result.local), aiScope)
+        : { source: 'ai', sourceLabel: `${providerName()} suggestion`, ...aiCorrection(text, result.output) };
     } else if (result.source === 'ai') {
       suggestion = localSuggestion(text, await result.local, `${providerName()} returned a rewrite rather than a correction, so it is not shown.`);
     } else if (result.aiError) {
@@ -877,7 +1106,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
     startup(`monitor review failed (latencyMs=${latency})`);
   } else {
     if (cacheable) reviewCache.set(key, text, { providerKey, suggestion });
-    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion });
+    monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: withLearning(text, suggestion) });
     startup(`monitor review completed (mode=${state.proofreadingMode}, source=${suggestion.source}, latencyMs=${latency}, changed=${suggestion.text !== text})`);
   }
   publishAssistantView();
@@ -915,7 +1144,9 @@ async function writeToMonitoredField(kind, replacement, expected) {
   pendingWrite = { kind, key: monitorSession.key, before: expected, text: replacement, done: false };
   publishAssistantView();
   try {
-    await withTemporaryClipboard(replacement, () => replaceFieldInWindow(snapshot.target, expected, snapshot.runtimeId));
+    // The helper verifies the field and its text, selects it whole, confirms the selection by
+    // copying it, pastes, and restores the user's clipboard.
+    await replaceFieldInWindow({ target: snapshot.target, runtimeId: snapshot.runtimeId, expected, replacement });
     completePendingWrite();
   } catch (error) {
     if (pendingWrite && !pendingWrite.done) pendingWrite = undefined;
@@ -929,7 +1160,44 @@ async function applyMonitorSuggestion() {
   const suggestion = currentMonitorSuggestion();
   if (!suggestion) throw new Error('There is no completed suggestion to apply.');
   if (suggestion.text === monitorSession.text) throw new Error('The suggestion matches your text; nothing to apply.');
-  await writeToMonitoredField('apply', suggestion.text, monitorSession.text);
+  const text = monitorSession.text;
+  const findings = monitorSession.suggestion?.findings;
+  const edited = monitorEditedResult?.revision === monitorSession.revision;
+  if (!monitorSession.snapshot?.replaceSupported && supportsSpanApply(monitorSession.snapshot)) await applyFixesInDocument();
+  else await writeToMonitoredField('apply', suggestion.text, text);
+  learnFrom(text, findings, edited);
+}
+
+// Rich editors: apply only the chosen fixes, each located by its surrounding text and verified
+// by the helper before pasting, so the rest of the document is never replaced.
+async function applyFixesInDocument() {
+  const snapshot = monitorSession.snapshot;
+  const suggestion = monitorSession.suggestion;
+  if (monitorEditedResult?.revision === monitorSession.revision) throw new Error('An edited suggestion can only be copied in this app. Use Copy.');
+  if (!suggestion || !hasEdits(suggestion.findings)) throw new Error('This suggestion can only be copied in this app. Use Copy.');
+  if (pendingWrite) throw new Error('ClearWrite is already updating this field.');
+  const text = monitorSession.text;
+  const spans = spansForEdits(text, chosenEdits(text, suggestion.findings));
+  if (!spans.length) throw new Error('Choose at least one change to apply.');
+  cancelReviewWork();
+  pendingWrite = { kind: 'apply', key: monitorSession.key, before: text, text: composeText(text, suggestion.findings), done: false };
+  publishAssistantView();
+  try {
+    const result = await replaceSpansInWindow({ target: snapshot.target, runtimeId: snapshot.runtimeId, spans });
+    startup(`in-place apply (applied=${result.applied}, total=${result.total})`);
+    if (result.applied !== result.total) {
+      const reason = result.problem ? `${result.problem} ` : '';
+      throw new Error(result.applied
+        ? `Applied ${result.applied} of ${result.total} changes. ${reason}Copy the rest instead.`
+        : `${reason}Nothing was changed. Use Copy instead.`);
+    }
+    completePendingWrite();
+  } catch (error) {
+    if (pendingWrite && !pendingWrite.done) pendingWrite = undefined;
+    throw error;
+  } finally {
+    publishAssistantView();
+  }
 }
 
 async function undoMonitorApply() {
@@ -993,6 +1261,15 @@ async function setProofreadingMode(value) {
   publishState();
   publishAssistantView();
   return next;
+}
+
+async function setAiReviewScope(value) {
+  if (value !== 'all' && value !== 'unsure') throw new Error('Choose when text is sent to the AI.');
+  state.aiReviewScope = value;
+  reviewCache.clear();
+  await savePreferences();
+  publishState();
+  return value;
 }
 
 async function setEnglishDialect(value) {
@@ -1059,7 +1336,7 @@ async function runMonitorAction(action, revision) {
   }
   // An edit, field change, dismissal or pause in the meantime aborts or outdates this result.
   if (controller.signal.aborted || !isCurrentRevision(monitorSession, revision)) return;
-  monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: { source: 'ai', action, sourceLabel: `${RESULT_LABELS[action]} · ${providerName()}`, text: output, findings: [], needsChoice: 0, note: '' } });
+  monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: { source: 'ai', action, sourceLabel: `${RESULT_LABELS[action]} · ${providerName()}`, text: output, findings: [], needsChoice: 0, note: rewriteWarning(text, output) } });
   publishAssistantView();
   dispatchPanel({ type: 'result' });
 }
@@ -1223,13 +1500,12 @@ function restartFocusMonitorForSettings() {
 // ---------------------------------------------------------------------------
 async function begin() {
   if (busy) { await restorePanel(); return; }
-  const snapshot = readClipboardSnapshot();
   let opened = false;
   try {
+    // The helper copies the selection and restores the user's clipboard in all its formats.
     const selection = await captureSelection();
-    const text = clipboard.readText();
-    const copied = selection.after !== selection.before;
-    if (copied && text) {
+    const text = selection.text;
+    if (selection.copied && text) {
       if (text.length > 60_000) throw new Error('That selection is too long. Select a smaller passage.');
       // The live field the selection came from, if ClearWrite is watching it. An edit in any
       // other field is a new writing context and replaces this manual session.
@@ -1243,9 +1519,6 @@ async function begin() {
   } catch (error) {
     state.notice = error.message || 'Could not read the selected text.';
     publishState();
-  } finally {
-    try { restoreClipboard(snapshot); }
-    catch { state.notice = 'Windows did not allow ClearWrite to restore the previous clipboard. Please check your clipboard.'; publishState(); }
   }
   // Nothing selected: the shortcut reopens the panel.
   if (!opened) await restorePanel();
@@ -1344,7 +1617,17 @@ async function transform(action) {
     }
     const output = await router.requestAi(action, selection.text, withTimeout(controller.signal, MANUAL_REQUEST_TIMEOUT_MS));
     if (controller.signal.aborted || manual !== selection) return;
-    Object.assign(selection, { status: 'done', result: output, source: 'ai', findings: [], note: '' });
+    if (action === 'correct') {
+      if (!isSafeCorrection(selection.text, output)) {
+        const local = manualLocalResult(selection.text, await proofreadMonitorText(selection.text), `${providerName()} returned a rewrite rather than a correction, so it is not shown.`);
+        if (manual === selection) Object.assign(selection, local);
+        return;
+      }
+      const correction = withLearning(selection.text, { source: 'ai', ...aiCorrection(selection.text, output) });
+      Object.assign(selection, { status: 'done', result: correction.text, source: 'ai', findings: correction.findings, needsChoice: correction.needsChoice, note: correction.note });
+    } else {
+      Object.assign(selection, { status: 'done', result: output, source: 'ai', findings: [], needsChoice: 0, note: action === 'reply' || action === 'continue' ? '' : rewriteWarning(selection.text, output) });
+    }
   } catch (error) {
     if (controller.signal.aborted || manual !== selection) return;
     if (action === 'correct' && error?.code !== 'OFFLINE_MODE') {
@@ -1363,7 +1646,7 @@ async function transform(action) {
 
 function manualLocalResult(text, review, note = '') {
   if (review.error) return { status: 'error', message: review.reason || 'The on-device check is unavailable.' };
-  const suggestion = localSuggestion(text, review, note);
+  const suggestion = withLearning(text, localSuggestion(text, review, note));
   return { status: 'done', result: suggestion.text, source: 'local', supported: suggestion.supported, findings: suggestion.findings, note: suggestion.note, needsChoice: suggestion.needsChoice };
 }
 
@@ -1396,6 +1679,7 @@ async function copyResult() {
   if (panel.mode === 'manual' && manual) {
     if (manual.status !== 'done' || !manual.result) throw new Error('There is no completed suggestion to copy.');
     clipboard.writeText(manual.result);
+    learnFrom(manual.text, manual.findings, manual.edited);
     state.notice = 'Suggestion copied. Paste it where you need it.';
     closeManual();
     publishState();
@@ -1404,6 +1688,7 @@ async function copyResult() {
   const suggestion = currentMonitorSuggestion();
   if (!suggestion) throw new Error('There is no completed suggestion to copy.');
   clipboard.writeText(suggestion.text);
+  learnFrom(monitorSession.text, monitorSession.suggestion?.findings, monitorEditedResult?.revision === monitorSession.revision);
   publishAssistantView({ flash: 'Copied to clipboard' });
 }
 
@@ -1412,7 +1697,8 @@ async function replaceSelection() {
     const selection = manual;
     if (selection.status !== 'done' || !selection.result) throw new Error('There is no completed suggestion to replace with.');
     if (selection.action === 'reply') throw new Error('Copy the reply and paste it where you want it.');
-    await withTemporaryClipboard(selection.result, () => pasteToWindow(selection.target));
+    await replaceVerifiedSelection(selection);
+    learnFrom(selection.text, selection.findings, selection.edited);
     state.notice = 'The selected text was replaced.';
     if (manual === selection) closeManual();
     publishState();
@@ -1421,9 +1707,15 @@ async function replaceSelection() {
   await applyMonitorSuggestion();
 }
 
+// Replace only what the writer selected: the helper re-copies the selection in the original
+// app and pastes only if it still equals the checked text.
+function replaceVerifiedSelection(selection) {
+  return replaceSelectionInWindow({ target: selection.target, expected: selection.text, replacement: selection.result });
+}
+
 function updateResult(value) {
   if (typeof value !== 'string' || value.length > 60_000) throw new Error('Suggestion text is too long.');
-  if (panel.mode === 'manual' && manual?.status === 'done') { manual.result = value; return; }
+  if (panel.mode === 'manual' && manual?.status === 'done') { manual.result = value; manual.edited = true; return; }
   if (currentMonitorSuggestion()) monitorEditedResult = { revision: monitorSession.revision, text: value };
 }
 
@@ -1481,7 +1773,16 @@ handle('app:update-provider', async (provider) => {
 handle('app:set-monitor', setMonitorEnabled);
 handle('app:set-proofreading-mode', setProofreadingMode);
 handle('app:set-dialect', setEnglishDialect);
+handle('app:set-ai-scope', setAiReviewScope);
+handle('app:set-underlines', setShowUnderlines);
+handle('underlines:hover', (active) => {
+  // Only a visible overlay may take clicks, and only while the pointer is over an underline.
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.setIgnoreMouseEvents(!(active === true && underlineWindow.isVisible()), { forward: true });
+});
+handle('underlines:open', openUnderline);
 handle('dictionary:list', () => personalDictionary.list());
+handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
+handle('learning:clear', async () => { await learningMemory.clear(); state.learnedPatterns = []; publishState(); });
 handle('dictionary:add', addDictionaryWord);
 handle('dictionary:remove', removeDictionaryWord);
 handle('app:pause-monitor', pauseMonitoring);
@@ -1536,6 +1837,7 @@ handle('assistant:retry', retryMonitorReview);
 handle('assistant:set-pinned', setPanelPinned);
 handle('assistant:ready', () => lastAssistantView || null);
 handle('assistant:add-word', addDictionaryWord);
+handle('assistant:choose-finding', chooseFinding);
 handle('live:proofread', proofreadLiveDraft);
 handle('live:cancel', cancelLiveProofread);
 handle('live:read-clipboard', () => clipboard.readText().slice(0, 6000));
@@ -1569,6 +1871,8 @@ async function loadPreferences() {
       try { state.allowedApps = normalizeProcessNames(raw.allowedApps).filter((name) => !defaultExcludedApps.includes(name)); } catch { }
     }
     if (raw.provider === 'chatgpt' || raw.provider === 'gemini') state.provider = raw.provider;
+    if (raw.aiReviewScope === 'all' || raw.aiReviewScope === 'unsure') state.aiReviewScope = raw.aiReviewScope;
+    if (typeof raw.showUnderlines === 'boolean') state.showUnderlines = raw.showUnderlines;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
       for (const provider of ['chatgpt', 'gemini']) {
         if (typeof raw.selectedModels[provider] === 'string' && raw.selectedModels[provider].length <= 120) selectedModels[provider] = raw.selectedModels[provider];
@@ -1624,6 +1928,8 @@ async function writePreferences() {
     panelPinned: panel.pinned,
     proofreadingMode: state.proofreadingMode,
     englishDialect: state.englishDialect,
+    aiReviewScope: state.aiReviewScope,
+    showUnderlines: state.showUnderlines,
     privacyDefaultsVersion: 1,
   };
   try { await writeFile(temporary, JSON.stringify(contents, null, 2), { flag: 'wx' }); await rename(temporary, file); }
@@ -1696,8 +2002,14 @@ else {
     try { state.dictionaryWords = await personalDictionary.load(); }
     catch (error) { state.notice = error.message; }
     state.dictionaryLocation = personalDictionary.file;
+    try { state.learnedPatterns = await learningMemory.load(); }
+    catch (error) { state.notice = error.message; state.learnedPatterns = []; }
     applyLocalCheckerConfig();
-    void proofreadLocally('').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
+    // A real sentence, so Harper, the context model and the grammar model all load now rather
+    // than during the writer's first check.
+    void proofreadLocally('This is a short warm-up sentence for the checker.').then(() => startup('on-device proofreader ready')).catch((error) => startup(`on-device proofreader warmup failed: ${error.message}`));
+    // Compile the keyboard/clipboard helper once now, so the first shortcut or Apply is fast.
+    void warmWindowsInput().then(() => startup('input helper ready')).catch((error) => startup(`input helper warmup failed: ${error.message}`));
     await createTray();
     startup('tray ready');
     try { await initUpdates(); }
@@ -1734,6 +2046,9 @@ app.on('before-quit', () => {
   liveRequest?.abort();
   focusMonitor?.kill();
   stopLocalProofreader();
+  stopWindowsInput();
+  hideUnderlines();
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.destroy();
   globalShortcut.unregisterAll();
   tray?.destroy();
   chatgpt.cancelSignIn();

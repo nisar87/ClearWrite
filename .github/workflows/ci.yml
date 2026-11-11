@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # Unit tests and the offline benchmark do not launch Electron.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+
+      # The optional ChatGPT DevKit (@siwc/local) is a sibling checkout that CI does not have;
+      # npm skips it as an optional dependency.
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Fetch the on-device grammar model (pinned, checksum-verified)
+        run: npm run model:fetch
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Editor reader fixture
+        run: npm run test:editors
+        continue-on-error: true
+
+      # Integration tests drive test-owned windows only; they need the runner's interactive desktop.
+      - name: Windows input integration tests
+        run: npm run test:input
+
+      - name: Offline accuracy benchmark
+        run: node scripts/benchmark-offline.js ci
+
+      - name: Benchmark gates
+        run: node scripts/benchmark-gate.js ci
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark/results/
+          if-no-files-found: ignore
+
+  # Ready-to-install build on every push: installer + ZIP, package checks, packaged-app smoke test.
+  # CI builds without the optional ChatGPT DevKit (explicit opt-out); Gemini and offline checking
+  # are included. Build the ChatGPT-included package locally as described in docs/DISTRIBUTION.md.
+  package:
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CLEARWRITE_DIST_WITHOUT_CHATGPT: '1'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # electron-builder packages node_modules/electron/dist; make sure the binary is present.
+      - name: Fetch the on-device grammar model (pinned, checksum-verified)
+        run: npm run model:fetch
+
+      - name: Download the Electron binary
+        shell: pwsh
+        run: |
+          if (-not (Test-Path node_modules/electron/dist/electron.exe)) { node node_modules/electron/install.js }
+          if (-not (Test-Path node_modules/electron/dist/electron.exe)) { throw 'Electron binary missing.' }
+
+      # Release dry run: the same version choice as release.yml (nothing is published from CI).
+      - name: Choose the release version (dry run)
+        id: version
+        shell: pwsh
+        run: |
+          gh release list --limit 200 --json tagName --jq '.[].tagName' > published-tags.txt
+          $version = node scripts/release-version.js published-tags.txt
+          if (-not $version) { throw 'No release version.' }
+          npm version $version --no-git-tag-version --allow-same-version | Out-Null
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Output "Next release would be $version"
+
+      - name: Build installer and ZIP
+        run: npm run dist:win
+
+      - name: Verify the package
+        run: npm run dist:verify
+
+      - name: Check the release files exist (dry run)
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $channel = if ($version.Contains('-')) { 'beta' } else { 'latest' }
+          foreach ($file in @("release/ClearWrite-$version-Setup-x64.exe", "release/ClearWrite-$version-Setup-x64.exe.blockmap", "release/ClearWrite-$version-Windows-x64.zip", "release/$channel.yml", 'release/SHA256SUMS.txt', 'docs/GETTING-STARTED.md')) {
+            if (-not (Test-Path $file)) { throw "Missing release file: $file" }
+          }
+          Write-Output "All release files for $version are present."
+
+      - name: Smoke-test the packaged app
+        shell: pwsh
+        run: |
+          $data = Join-Path $env:RUNNER_TEMP 'clearwrite-smoke'
+          $env:CLEARWRITE_DATA_DIR = $data
+          $process = Start-Process -FilePath 'release/win-unpacked/ClearWrite.exe' -ArgumentList '--distribution-smoke' -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Smoke test timed out.' }
+          $report = Get-Content (Join-Path $data 'distribution-smoke.json') -Raw
+          Write-Output $report
+          if (-not ($report | ConvertFrom-Json).passed) { throw 'Packaged app smoke test failed.' }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClearWrite-Windows-installer
+          path: |
+            release/*.exe
+            release/*.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  # Phase 3 evaluation: a small sentence-level grammar model on the same benchmark, raw and
+  # through ClearWrite's meaning guard. Evaluation only; nothing here ships.
+  model-eval:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Evaluate t5-tiny grammar model (MIT, C4_200M)
+        run: node scripts/evaluate-gec-model.js rabden/t5-tiny-gec-hone t5-tiny
+      - name: Upload model reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-eval
+          path: benchmark/results/
+          if-no-files-found: ignore

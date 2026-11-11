@@ -15,6 +15,8 @@ export function spellingDistance(a, b) {
 }
 
 function insertionCost(word, index) {
+  // A missing apostrophe ("dont", "isnt") is one of the most common typing omissions.
+  if (word[index] === "'" || word[index] === '’') return 0.3;
   // Dropped repeated letters and vowels are common typing errors. These are generic
   // character costs, not word-specific replacements or a claim of semantic confidence.
   if (word[index] === word[index - 1] || word[index] === word[index + 1]) return 0.5;
@@ -27,7 +29,7 @@ export function selectSpellingCandidate({ text, start, end, candidates }) {
   // Multiword replacements, identifiers and names need human judgement.
   if (!/^[a-z]{3,32}$/.test(original) || candidates.length < 2) return -1;
   const ranked = candidates.map((word, index) => {
-    if (!/^[a-z]{3,36}$/.test(word)) return { index, edits: Infinity, score: Infinity };
+    if (!/^[a-z]{3,36}$/.test(word) && !/^[a-z]{1,30}['’][a-z]{1,3}$/.test(word)) return { index, edits: Infinity, score: Infinity };
     const edits = spellingDistance(original, word);
     return { index, edits, score: edits };
   }).sort((a, b) => a.score - b.score);

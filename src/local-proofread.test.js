@@ -159,3 +159,58 @@ test('context correction after emoji keeps offsets and surrounding text intact',
   assert.ok(finding);
   assert.equal([...text].slice(finding.start, finding.end).join(''), 'mesage');
 });
+
+test('each local finding carries exact edits so it can be accepted on its own', async () => {
+  configureLocalProofreader({ dialect: 'american', words: [] });
+  const { composeText, chooseOption } = await import('./finding-edits.js');
+  const text = 'This is a example. Please send the mesage tomorow.';
+  const review = await proofreadLocally(text);
+  assert.equal(review.correctedText, composeText(text, review.findings), 'the proposed text is built from the chosen edits');
+  for (const finding of review.findings) {
+    assert.ok(Array.isArray(finding.edits) && finding.edits.length === finding.suggestions.length);
+    assert.equal(finding.choice, finding.appliedLocally ? 0 : -1);
+    for (const edit of finding.edits) assert.ok(edit.start >= 0 && edit.end <= [...text].length && edit.start <= edit.end);
+  }
+  const article = review.findings.findIndex((finding) => finding.original === 'a');
+  assert.ok(article >= 0);
+  const onlyArticleIgnored = chooseOption(review.findings, article, 'ignore');
+  const result = composeText(text, onlyArticleIgnored);
+  assert.ok(result.startsWith('This is a example.'), 'ignoring one finding keeps that text');
+  const other = onlyArticleIgnored.find((finding, index) => index !== article && finding.choice >= 0);
+  assert.ok(other, 'at least one other fix is proposed');
+  assert.ok(result.includes(other.edits[0].text), 'other accepted fixes still apply');
+});
+
+test('a dropped apostrophe is offered as the contraction', async () => {
+  configureLocalProofreader({ dialect: 'american', words: [] });
+  const review = await proofreadLocally('I dont think we should wait.');
+  const finding = review.findings.find((item) => item.original === 'dont');
+  assert.ok(finding, 'the typo is flagged');
+  assert.equal(finding.suggestions[0], "don't", `offered: ${finding.suggestions.join(', ')}`);
+  assert.equal(review.correctedText, "I don't think we should wait.");
+});
+
+test('the on-device grammar model adds context fixes Harper misses, when its files are installed', async (t) => {
+  const { access } = await import('node:fs/promises');
+  try { await access(new URL('../assets/models/gec-t5-tiny/onnx/decoder_model_merged_quantized.onnx', import.meta.url)); }
+  catch { t.skip('grammar model not fetched (npm run model:fetch)'); return; }
+  configureLocalProofreader({ dialect: 'american', words: [] });
+  const { localGrammarModelStatus } = await import('./local-proofread.js');
+  const status = await localGrammarModelStatus();
+  assert.equal(status.available, true, `model did not load: ${status.error}`);
+  // Measured on the benchmark: Harper misses "to large"; the filtered model fixes it.
+  const review = await proofreadLocally('The file is to large to send.');
+  const finding = review.findings.find((item) => item.source === 'model');
+  assert.ok(finding, JSON.stringify(review.findings));
+  assert.equal(finding.original, 'to');
+  assert.equal(finding.suggestions[0], 'too');
+  assert.equal(review.correctedText, 'The file is too large to send.');
+  const contributions = [];
+  for (const sentence of ['The report are ready for review.', 'The results was surprising.', 'We is ready to start.', 'The documents is on the shared drive.']) {
+    const result = await proofreadLocally(sentence);
+    contributions.push(...result.findings.filter((item) => item.source === 'model').map((item) => `${item.original}->${item.suggestions[0]}`));
+  }
+  console.log(`model contributions: ${contributions.join(', ') || 'none'}`);
+  const clean = await proofreadLocally('Her presentation covered pricing, onboarding and support.');
+  assert.deepEqual(clean.findings, [], 'correct text is left alone');
+});

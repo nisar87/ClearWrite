@@ -78,3 +78,13 @@ export function stopLocalProofreader() {
   void worker?.terminate();
   worker = undefined;
 }
+
+// Whether the on-device grammar model loaded in the worker ({ available, name } or { available: false, error }).
+export function localGrammarModelStatus() {
+  const id = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => { pending.delete(id); reject(new Error('The on-device proofreader took too long.')); }, 60_000);
+    pending.set(id, { resolve, reject, timeout });
+    getWorker().postMessage({ type: 'model-status', id });
+  });
+}

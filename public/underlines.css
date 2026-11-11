@@ -1,0 +1,9 @@
+/* Transparent overlay: only the wavy lines are visible; everything else lets clicks through. */
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; user-select: none; }
+#underlines { position: fixed; inset: 0; }
+.underline { position: absolute; height: 4px; cursor: pointer; background-repeat: repeat-x; background-size: 6px 4px; }
+.underline.spelling { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 3 Q1.5 0 3 3 T6 3' fill='none' stroke='%23d1453b' stroke-width='1.3'/></svg>"); }
+.underline.grammar { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 3 Q1.5 0 3 3 T6 3' fill='none' stroke='%232f6fd1' stroke-width='1.3'/></svg>"); }
+.underline.learned { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='4'><path d='M0 3 Q1.5 0 3 3 T6 3' fill='none' stroke='%232f8a66' stroke-width='1.3'/></svg>"); }
+.underline.hover { filter: brightness(0.7); }
+.hit { position: absolute; }

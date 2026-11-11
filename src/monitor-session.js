@@ -1,4 +1,12 @@
 import { hasProofreadableProse, isReadyForLiveProofread } from './live-proofread.js';
+import { hasEdits } from './finding-edits.js';
+
+// Rich editors (TextPattern documents) cannot be replaced as a whole, but individual chosen
+// fixes can be applied in place (see spansForEdits and the helper's replace-spans action).
+// Only managed-UIA readers have a runtime id the helper can match.
+export function supportsSpanApply(snapshot) {
+  return Boolean(snapshot && !snapshot.replaceSupported && snapshot.runtimeId && ['text', 'value'].includes(snapshot.reader));
+}
 
 // Content state for the active writing field. Visibility lives in panel-lifecycle.js.
 //
@@ -234,14 +242,16 @@ export function monitorView(session, { connected = false, provider = 'chatgpt', 
       if (!suggestion) return view;
       const unchanged = suggestion.text === text;
       const skipped = suggestion.source === 'local' && suggestion.supported === false;
-      const unresolved = suggestion.needsChoice > 0 || suggestion.findings?.some((finding) => !finding.appliedLocally);
+      // Findings with edits track the writer's choices; a chosen or ignored finding is resolved.
+      const unresolved = suggestion.needsChoice > 0 || suggestion.findings?.some((finding) => (Array.isArray(finding.edits) ? !finding.ignored && !(finding.choice >= 0) : !finding.appliedLocally));
       return {
         ...view,
         suggestion,
         status: skipped ? 'quiet' : !unchanged || unresolved ? 'suggestion' : 'clean',
         statusLine: awayLine || (skipped ? 'Offline check skipped' : unresolved ? 'Possible mistakes need your review' : unchanged ? 'No corrections found' : 'Suggestion ready to review'),
         canCopy: !unchanged,
-        canApply: !unchanged && base.replaceSupported,
+        canApply: !unchanged && (base.replaceSupported || (supportsSpanApply(session.snapshot) && hasEdits(suggestion.findings))),
+        applyMode: base.replaceSupported ? 'field' : 'spans',
       };
     }
     default:

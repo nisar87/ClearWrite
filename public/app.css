@@ -304,6 +304,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .actions .needs-ai { position: relative; }
 .actions .needs-ai::after { content: "Needs AI"; position: absolute; top: 6px; right: 8px; padding: 1px 5px; border-radius: 8px; background: var(--blue-pale); color: var(--blue); font-size: 9.5px; font-weight: 650; }
 .findings .add-word { display: inline-block; margin-top: 2px; padding: 0; font-size: 11px; }
+.findings li.resolved { border-left-color: #6fbf9b; background: #f1f9f5; }
+.findings li.ignored { border-left-color: #cfd6d3; background: #f6f7f7; color: #7b8582; }
+.findings li.ignored b { font-weight: 500; text-decoration: line-through; }
+.finding-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; }
+.finding-controls .link-button { padding: 0; font-size: 11px; }
+.finding-option { min-height: 24px; padding: 2px 8px; border: 1px solid #d8cfb8; border-radius: 12px; background: #fff; color: #3c4a46; font-size: 12px; }
+.finding-option:hover:not(:disabled) { border-color: #a9c9bd; background: #f8fbf9; }
+.finding-option[aria-pressed="true"] { border-color: #2f8a66; background: #dcf1e7; color: #135f45; font-weight: 650; }
+.finding-option:focus-visible { outline: 2px solid #2f8a66; outline-offset: 1px; }
+.findings-more { color: #7b7262; font-size: 11px; }
+.hints { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 11.5px; }
+.hints li { padding: 5px 8px; border-left: 3px solid #b9c7e6; border-radius: 3px; background: #f4f7fd; color: #3d4a63; }
+.hints b { font-weight: 650; }
+.findings li.focused { outline: 2px solid #2f6fd1; outline-offset: 1px; }
 .update-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 24px; background: var(--teal-pale); border-bottom: 1px solid var(--line); color: var(--ink); font-size: 12px; }
 .update-controls { flex-wrap: wrap; }
 #updates-section progress { display: block; width: 100%; height: 12px; margin: 10px 0; accent-color: var(--teal); }

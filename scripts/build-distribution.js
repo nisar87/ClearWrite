@@ -22,7 +22,11 @@ for (const name of ['src', 'public', 'assets', 'LICENSE', 'SIWC-DEVKIT-LICENSE.t
 }
 
 const bundled = new Map();
-async function copyDependency(name, from) {
+// `parent` is the package folder (inside the app) whose dependency this is. A second version of
+// a package already placed at the top level is nested under the package that needs it, which is
+// where Node's resolution looks first.
+const nested = new Set();
+async function copyDependency(name, from, parent = appDir) {
   const resolver = createRequire(path.join(from, 'package.json'));
   let packageFile;
   // Resolve package directories directly: ESM-only packages may hide package.json
@@ -36,17 +40,21 @@ async function copyDependency(name, from) {
   if (!packageFile) throw new Error(`Cannot locate installed runtime package ${name}`);
   const source = await realpath(path.dirname(packageFile));
   const metadata = JSON.parse(await readFile(path.join(source, 'package.json'), 'utf8'));
+  let destination = path.join(appDir, 'node_modules', name);
   if (bundled.has(name)) {
-    if (bundled.get(name) !== metadata.version) throw new Error(`Conflicting versions of ${name}`);
-    return metadata.version;
-  }
-  bundled.set(name, metadata.version);
-  const destination = path.join(appDir, 'node_modules', name);
+    if (bundled.get(name) === metadata.version) return metadata.version;
+    if (parent === appDir) throw new Error(`Conflicting versions of ${name}`);
+    destination = path.join(parent, 'node_modules', name);
+    if (nested.has(destination)) return metadata.version;
+    nested.add(destination);
+  } else bundled.set(name, metadata.version);
   await cp(source, destination, {
     recursive: true, dereference: true,
     filter: (file) => {
       const parts = path.relative(source, file).split(path.sep);
       if (name === '@siwc/local' && parts[0] && !['dist', 'package.json'].includes(parts[0])) return false;
+      // ONNX Runtime ships native binaries for every platform; the Windows x64 package needs one.
+      if (name === 'onnxruntime-node' && parts[0] === 'bin' && ((parts[2] && parts[2] !== 'win32') || (parts[3] && parts[3] !== 'x64'))) return false;
       return !parts.some((part) => ['node_modules', '.git', 'test', 'tests', '.cache'].includes(part));
     },
   });
@@ -56,12 +64,22 @@ async function copyDependency(name, from) {
     }
     await readFile(path.join(destination, 'dist/index.js'));
   }
-  for (const dependency of Object.keys(metadata.dependencies || {})) await copyDependency(dependency, source);
+  for (const dependency of Object.keys(metadata.dependencies || {})) await copyDependency(dependency, source, destination);
+  // Optional dependencies hold platform binaries (for example sharp's Windows build): copy the
+  // ones npm installed for this platform, skip the rest.
+  for (const dependency of Object.keys(metadata.optionalDependencies || {})) {
+    if (dependency === '@siwc/local') continue;
+    try { await copyDependency(dependency, source, destination); } catch (error) { if (!/Cannot locate/.test(error.message)) throw error; }
+  }
   return metadata.version;
 }
 
 const dependencies = {};
-for (const name of [...Object.keys(manifest.dependencies), '@siwc/local']) {
+// The ChatGPT DevKit is required unless the build explicitly opts out (CI builds a Gemini and
+// offline-only package this way). Never dropped silently.
+const withoutChatGPT = process.env.CLEARWRITE_DIST_WITHOUT_CHATGPT === '1';
+if (withoutChatGPT) console.log('Building WITHOUT the optional ChatGPT DevKit (CLEARWRITE_DIST_WITHOUT_CHATGPT=1).');
+for (const name of [...Object.keys(manifest.dependencies), ...(withoutChatGPT ? [] : ['@siwc/local'])]) {
   dependencies[name] = await copyDependency(name, root);
 }
 await writeFile(path.join(appDir, 'package.json'), JSON.stringify({
@@ -73,7 +91,7 @@ await writeFile(path.join(appDir, 'build-manifest.json'), JSON.stringify({
   sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
   sourceDirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()),
   dependencies: Object.fromEntries(bundled),
-  chatgptLicense: 'SIWC-DEVKIT-LICENSE.txt (noncommercial only)',
+  chatgptLicense: withoutChatGPT ? 'not included' : 'SIWC-DEVKIT-LICENSE.txt (noncommercial only)',
 }, null, 2));
 
 await build({

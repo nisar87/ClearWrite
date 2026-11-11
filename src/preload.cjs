@@ -22,10 +22,14 @@ contextBridge.exposeInMainWorld('clearWrite', {
   setMonitor: (enabled) => ipcRenderer.invoke('app:set-monitor', enabled),
   setProofreadingMode: (mode) => ipcRenderer.invoke('app:set-proofreading-mode', mode),
   setDialect: (dialect) => ipcRenderer.invoke('app:set-dialect', dialect),
+  setAiScope: (scope) => ipcRenderer.invoke('app:set-ai-scope', scope),
   listDictionary: () => ipcRenderer.invoke('dictionary:list'),
   addDictionaryWord: (word) => ipcRenderer.invoke('dictionary:add', word),
   removeDictionaryWord: (word) => ipcRenderer.invoke('dictionary:remove', word),
+  forgetLearned: (from, to) => ipcRenderer.invoke('learning:remove', from, to),
+  forgetAllLearned: () => ipcRenderer.invoke('learning:clear'),
   addWordFromPanel: (word) => ipcRenderer.invoke('assistant:add-word', word),
+  chooseFinding: (index, option) => ipcRenderer.invoke('assistant:choose-finding', index, option),
   pauseMonitor: (period) => ipcRenderer.invoke('app:pause-monitor', period),
   saveGeminiKey: (key) => ipcRenderer.invoke('gemini:save-key', key),
   removeGeminiKey: () => ipcRenderer.invoke('gemini:remove-key'),
@@ -51,6 +55,14 @@ contextBridge.exposeInMainWorld('clearWrite', {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('live:delta', listener);
     return () => ipcRenderer.removeListener('live:delta', listener);
+  },
+  underlineHover: (active) => ipcRenderer.invoke('underlines:hover', active),
+  openUnderline: (index) => ipcRenderer.invoke('underlines:open', index),
+  setShowUnderlines: (enabled) => ipcRenderer.invoke('app:set-underlines', enabled),
+  onUnderlines: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('underlines:state', listener);
+    return () => ipcRenderer.removeListener('underlines:state', listener);
   },
   onState: (callback) => {
     const listener = (_event, value) => callback(value);

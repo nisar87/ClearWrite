@@ -37,6 +37,13 @@ export function createContextSpeller({ unigrams, bigrams }) {
     return Math.min(4, Math.log10(1 + count / Math.max(1, expected)));
   }
   return {
+    // Bigram association of `word` with its neighbours (0 when unknown). Used to check whether a
+    // proposed word fits its context better than the original.
+    contextFit(left, word, right) {
+      const w = String(word || '').toLowerCase();
+      return (left ? lift(String(left).toLowerCase(), w) : 0) + (right ? lift(w, String(right).toLowerCase()) : 0);
+    },
+    knows(word) { return frequencies.has(String(word || '').toLowerCase()); },
     rank({ text, start, end, candidates }) {
       const points = [...text];
       const original = points.slice(start, end).join('');
@@ -54,18 +61,31 @@ export function createContextSpeller({ unigrams, bigrams }) {
           if (Math.abs(candidate.length - word.length) <= 2 && spellingDistance(word, candidate) <= 2) expanded.add(candidate);
         }
       }
-      const scored = [...expanded].filter((candidate) => /^[a-z]{2,26}$/.test(candidate)).map((candidate) => {
+      // Contractions such as "don't" come only from Harper (the index holds plain words); keep
+      // them, normalising the typographic apostrophe so they are scored like other candidates.
+      const scored = [...expanded].map((candidate) => candidate.replace(/’/g, "'")).filter((candidate) => /^[a-z]{2,26}$/.test(candidate) || /^[a-z]+'[a-z]{1,3}$/.test(candidate)).map((candidate) => {
         const edits = spellingDistance(word, candidate);
         const context = (left ? lift(left, candidate) : 0) + (right ? lift(candidate, right) : 0);
         const score = -2 * edits + 0.25 * Math.log10(1 + (frequencies.get(candidate) || 0)) + 0.9 * context;
         return { candidate, edits, context, score };
       }).sort((a, b) => b.score - a.score || a.candidate.localeCompare(b.candidate));
+      // The same letters with an apostrophe added ("dont" -> "don't") is almost certainly the
+      // intended contraction. Harper proposed it, so it is a real word; the statistical model has
+      // no contractions and would otherwise rank it below unrelated common words.
+      // Only negative contractions ("dont" -> "don't") are certain enough to pre-select: other
+      // endings ('re, 's, 've, 'll, 'd, 'm) collide with possessives ("theyre report" means
+      // "their report"), so those are offered first but left for the writer to choose.
+      const contraction = scored.findIndex((entry) => entry.candidate.includes("'") && entry.candidate.replace(/'/g, '') === word);
+      if (contraction > 0) scored.unshift(...scored.splice(contraction, 1));
+      const certainContraction = contraction >= 0 && /n't$/.test(scored[0].candidate);
+      if (certainContraction) scored[0] = { ...scored[0], score: Infinity };
+      const offerOnly = contraction >= 0 && !certainContraction;
       const best = scored[0];
       const margin = best ? best.score - (scored[1]?.score ?? -Infinity) : 0;
       const contextual = best?.context >= 1;
       const baseline = selectSpellingCandidate({ text: word, start: 0, end: word.length, candidates: scored.map((entry) => entry.candidate) });
-      const selected = canSelect && best && ((best.edits <= (contextual ? 2 : 1.5) && margin >= 0.75) || baseline === 0) ? 0 : -1;
-      const restoreCase = (value) => candidates.find((candidate) => candidate.toLowerCase() === value)
+      const selected = !offerOnly && canSelect && best && ((best.edits <= (contextual ? 2 : 1.5) && margin >= 0.75) || baseline === 0) ? 0 : -1;
+      const restoreCase = (value) => candidates.find((candidate) => candidate.toLowerCase().replace(/’/g, "'") === value)
         || (/^[A-Z][a-z]+$/.test(original) ? value[0].toUpperCase() + value.slice(1) : value);
       if (selected < 0 && canSelect && candidates.length === 1 && /^[A-Za-z]+$/.test(candidates[0])) {
         return { candidates: [candidates[0], ...scored.map((entry) => restoreCase(entry.candidate)).filter((candidate) => candidate !== candidates[0])], selected: 0 };

@@ -39,13 +39,13 @@ window.addEventListener('mousemove', (event) => {
   if (index === hovering) return;
   hovering = index;
   layer.querySelectorAll('.underline').forEach((line) => line.classList.toggle('hover', Number(line.dataset.index) === index));
-  void api.underlineHover(index >= 0);
+  void api.underlineHover(index);
 });
 window.addEventListener('mouseleave', () => {
   if (hovering < 0) return;
   hovering = -1;
   layer.querySelectorAll('.underline.hover').forEach((line) => line.classList.remove('hover'));
-  void api.underlineHover(false);
+  void api.underlineHover(-1);
 });
 window.addEventListener('mousedown', (event) => {
   const index = hitTest(event.clientX, event.clientY);

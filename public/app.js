@@ -179,6 +179,7 @@ function renderProofreading(state, { isGemini, connected }) {
   }
   select.value = state.englishDialect || 'american';
   $('underlines-toggle').checked = state.showUnderlines !== false;
+  document.querySelectorAll('input[name="suggestion-style"]').forEach((input) => { input.checked = input.value === (state.suggestionStyle || 'inline'); });
   document.querySelectorAll('input[name="ai-scope"]').forEach((input) => {
     input.checked = input.value === (state.aiReviewScope || 'unsure');
     input.disabled = state.proofreadingMode !== 'ai';
@@ -247,6 +248,11 @@ $('underlines-toggle').addEventListener('change', async () => {
   try { await requireApi('setShowUnderlines')($('underlines-toggle').checked); showNotice($('underlines-toggle').checked ? 'Mistakes are underlined in supported editors.' : 'Underlines are off; suggestions stay in the panel.', true); }
   catch (error) { showNotice(error.message, true); }
 });
+document.querySelectorAll('input[name="suggestion-style"]').forEach((input) => input.addEventListener('change', async () => {
+  if (!input.checked) return;
+  try { await requireApi('setSuggestionStyle')(input.value); showNotice(input.value === 'inline' ? 'Suggestions appear in your text; click the widget for the full panel.' : 'The panel opens next to the field while you write.', true); }
+  catch (error) { showNotice(error.message, true); }
+}));
 document.querySelectorAll('input[name="ai-scope"]').forEach((input) => input.addEventListener('change', async () => {
   if (!input.checked) return;
   try {

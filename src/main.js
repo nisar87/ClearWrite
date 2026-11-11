@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { captureSelection, replaceFieldInWindow, replaceSelectionInWindow, replaceSpansInWindow, stopWindowsInput, warmWindowsInput, wordBoundsInWindow } from './windows-input.js';
 import { reviewAiCorrection, rewriteWarning } from './ai-changes.js';
 import { correctByParagraph, createParagraphCache } from './paragraph-review.js';
+import { badgePlacement, cardPlacement } from './inline-popups.js';
 import { chooseOption, chosenEdits, composeText, hasEdits, spansForEdits, underlineLayout, underlineLocators, mapFindingsFromProtected, offsetFindings, splitForChecking, unresolvedCount } from './finding-edits.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -114,6 +115,9 @@ let state = {
   aiReviewScope: 'unsure',
   // Wavy underlines drawn under findings in editors that report word positions.
   showUnderlines: true,
+  // 'inline': like Grammarly - underlines, a corner widget and suggestion cards; the panel opens
+  // only when asked. 'panel': the panel comes forward while you write (earlier behaviour).
+  suggestionStyle: 'inline',
   dictionaryWords: [],
   learnedPatterns: [],
   dictionaryLocation: '',
@@ -519,7 +523,7 @@ function keepPanelReachable() {
 
 function safeSender(event) {
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (![mainWindow, assistantWindow, underlineWindow].includes(win) || !event.senderFrame?.url.startsWith('file://')) throw new Error('This action is only available inside ClearWrite.');
+  if (![mainWindow, assistantWindow, underlineWindow, badgeWindow, cardWindow].includes(win) || !event.senderFrame?.url.startsWith('file://')) throw new Error('This action is only available inside ClearWrite.');
 }
 
 function handle(channel, fn) {
@@ -650,6 +654,7 @@ let underlineWindow;
 let underlineTimer;
 let underlineBusy = false;
 let underlineKey = '';
+let lastUnderlineItems = [];
 const UNDERLINE_REFRESH_MS = 900;
 
 function underlineTarget() {
@@ -678,6 +683,8 @@ function hideUnderlines() {
   clearInterval(underlineTimer);
   underlineTimer = undefined;
   underlineKey = '';
+  lastUnderlineItems = [];
+  hideCard();
   hideOverlay();
 }
 
@@ -712,6 +719,7 @@ async function measureUnderlines() {
         return [dip.x, dip.y, dip.width, dip.height];
       }),
     }));
+    lastUnderlineItems = items;
     const layout = underlineLayout(items);
     if (!layout) { hideOverlay(); return; }
     const win = ensureUnderlineWindow();
@@ -730,6 +738,7 @@ function scheduleUnderlines() {
   if (!target) { hideUnderlines(); return; }
   if (target.key !== underlineKey) {
     underlineKey = target.key;
+    hideCard();
     hideOverlay();
     void measureUnderlines();
   }
@@ -738,9 +747,155 @@ function scheduleUnderlines() {
 
 async function openUnderline(index) {
   if (!Number.isSafeInteger(index)) return;
+  if (state.suggestionStyle === 'inline') { showCard(index); return; }
   setUnderlinesClickThrough();
   await restorePanel();
   publishAssistantView({ focusFinding: index });
+}
+
+// ---------------------------------------------------------------------------
+// Inline suggestions (like Grammarly): a widget in the corner of the field and a card under an
+// underlined word. Both are small windows that never take focus, so the writer keeps typing in
+// their app; a card click applies just that one fix in place.
+// ---------------------------------------------------------------------------
+let badgeWindow;
+let cardWindow;
+let cardIndex = -1;
+let cardHovered = false;
+let cardHideTimer;
+let cardShowTimer;
+let hoveredUnderline = -1;
+const BADGE_SIZE = 30;
+const CARD_WIDTH = 300;
+
+function popupWindow(file, { width, height }) {
+  const win = new BrowserWindow({
+    show: false, width, height, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+    focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, backgroundColor: '#00000000',
+    webPreferences: { preload: path.join(root, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: false, spellcheck: false },
+  });
+  win.setAlwaysOnTop(true, 'pop-up-menu');
+  void win.loadFile(path.join(root, `../public/${file}`));
+  return win;
+}
+
+function badgeState() {
+  if (state.suggestionStyle !== 'inline' || !monitoringActive() || panel.mode === 'manual') return null;
+  if (!monitorSession.key || ['idle', 'away'].includes(monitorSession.phase)) return null;
+  if (!fieldRectDip(monitorSession.snapshot)) return null;
+  const view = companionView();
+  if (view.status === 'working' || view.status === 'pending') return { status: 'checking' };
+  if (view.status === 'error') return { status: 'error' };
+  if (view.status === 'suggestion') {
+    const findings = monitorSession.suggestion?.findings || [];
+    const count = findings.length ? findings.filter((finding) => !finding.ignored).length : 1;
+    return count ? { status: 'issues', count } : { status: 'clear' };
+  }
+  if (view.status === 'clean' || view.status === 'applied') return { status: 'clear' };
+  return null;
+}
+
+function badgePosition(rect) {
+  return badgePlacement(rect, screen.getDisplayMatching(rect).workArea, BADGE_SIZE);
+}
+
+function updateBadge() {
+  const next = badgeState();
+  if (!next) { if (badgeWindow && !badgeWindow.isDestroyed() && badgeWindow.isVisible()) badgeWindow.hide(); return; }
+  if (!badgeWindow || badgeWindow.isDestroyed()) badgeWindow = popupWindow('badge.html', { width: BADGE_SIZE, height: BADGE_SIZE });
+  badgeWindow.setBounds(badgePosition(fieldRectDip(monitorSession.snapshot)));
+  const send = () => badgeWindow.webContents.send('badge:state', next);
+  if (badgeWindow.webContents.isLoading()) badgeWindow.webContents.once('did-finish-load', send); else send();
+  if (!badgeWindow.isVisible()) badgeWindow.showInactive();
+}
+
+function hideCard() {
+  clearTimeout(cardShowTimer);
+  clearTimeout(cardHideTimer);
+  cardIndex = -1;
+  cardHovered = false;
+  if (cardWindow && !cardWindow.isDestroyed() && cardWindow.isVisible()) cardWindow.hide();
+}
+
+function scheduleCardHide() {
+  clearTimeout(cardHideTimer);
+  cardHideTimer = setTimeout(() => { if (!cardHovered && hoveredUnderline !== cardIndex) hideCard(); }, 700);
+}
+
+// Hovering an underline for a moment opens its card, as a click does at once.
+function hoverUnderline(index) {
+  hoveredUnderline = index;
+  clearTimeout(cardShowTimer);
+  if (state.suggestionStyle !== 'inline') return;
+  if (index < 0) { if (cardIndex >= 0) scheduleCardHide(); return; }
+  if (index === cardIndex) { clearTimeout(cardHideTimer); return; }
+  cardShowTimer = setTimeout(() => { if (hoveredUnderline === index) showCard(index); }, 350);
+}
+
+function cardBounds(index, height) {
+  const item = lastUnderlineItems.find((entry) => entry.index === index && entry.rects.length);
+  if (!item) return null;
+  const [x, y, w, h] = item.rects[0];
+  const area = screen.getDisplayMatching({ x: Math.round(x), y: Math.round(y), width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)) }).workArea;
+  return cardPlacement(item.rects[0], area, CARD_WIDTH, height);
+}
+
+function showCard(index) {
+  const suggestion = monitorSession.suggestion;
+  const finding = suggestion?.findings?.[index];
+  if (!finding || !Array.isArray(finding.edits) || finding.ignored) return;
+  const bounds = cardBounds(index, 150);
+  if (!bounds) return;
+  clearTimeout(cardHideTimer);
+  if (!cardWindow || cardWindow.isDestroyed()) cardWindow = popupWindow('card.html', { width: CARD_WIDTH, height: 150 });
+  cardIndex = index;
+  cardWindow.setBounds(bounds);
+  const payload = { index, finding: { kind: finding.kind || '', message: finding.message || '', original: finding.original, suggestions: finding.suggestions || [], edits: finding.edits } };
+  const send = () => cardWindow.webContents.send('card:state', payload);
+  if (cardWindow.webContents.isLoading()) cardWindow.webContents.once('did-finish-load', send); else send();
+  if (!cardWindow.isVisible()) cardWindow.showInactive();
+}
+
+function resizeCard(height) {
+  if (!cardWindow || cardWindow.isDestroyed() || cardIndex < 0 || !Number.isFinite(height)) return;
+  const bounds = cardBounds(cardIndex, Math.min(Math.max(Math.round(height), 80), 360));
+  if (bounds) cardWindow.setBounds(bounds);
+}
+
+async function openFullPanel(index) {
+  hideCard();
+  await restorePanel();
+  if (Number.isSafeInteger(index)) publishAssistantView({ focusFinding: index });
+}
+
+// One click on a card: apply only that finding's chosen option, in place.
+async function applyOneFinding(index, option) {
+  const suggestion = monitorSession.suggestion;
+  const finding = suggestion?.findings?.[index];
+  if (monitorSession.phase !== 'suggestion' || !finding?.edits?.[option]) throw new Error('This suggestion is no longer available.');
+  const text = monitorSession.text;
+  const single = suggestion.findings.map((item, position) => (position === index ? { ...item, choice: option, ignored: false } : { ...item, choice: -1 }));
+  hideCard();
+  await applyFindings(text, single);
+  learnFrom(text, [single[index]]);
+}
+
+async function ignoreOneFinding(index) {
+  const finding = monitorSession.suggestion?.findings?.[index];
+  if (!finding) return;
+  const text = monitorSession.text;
+  hideCard();
+  chooseFinding(index, 'ignore');
+  learnFrom(text, [{ ...finding, choice: -1, ignored: true }]);
+}
+
+async function setSuggestionStyle(value) {
+  if (value !== 'inline' && value !== 'panel') throw new Error('Choose how suggestions are shown.');
+  state.suggestionStyle = value;
+  if (value === 'panel') { hideCard(); if (badgeWindow && !badgeWindow.isDestroyed()) badgeWindow.hide(); }
+  await savePreferences();
+  publishState();
+  publishAssistantView();
 }
 
 async function setShowUnderlines(enabled) {
@@ -754,6 +909,7 @@ async function setShowUnderlines(enabled) {
 
 function publishAssistantView(extra = {}) {
   scheduleUnderlines();
+  updateBadge();
   const view = panel.mode === 'manual' && manual ? manualView() : companionView();
   lastAssistantView = {
     ...view,
@@ -864,17 +1020,20 @@ function handleFocusSnapshot(snapshot) {
   if (monitorSession.phase === 'editing' && isReviewableText(snapshot.text)) {
     // A genuine edit with proofreadable text: the only automatic reason to show the panel.
     const wasManual = panel.mode === 'manual';
-    dispatchPanel({ type: 'writing', key: snapshot.key }, { targetRect: fieldRectDip(snapshot) });
+    // Inline style: the panel stays closed while writing (the widget and underlines show the
+    // results); it only updates in place if the writer already opened it.
+    if (state.suggestionStyle !== 'inline' || panel.visible) dispatchPanel({ type: 'writing', key: snapshot.key }, { targetRect: fieldRectDip(snapshot) });
     if (wasManual && panel.mode === 'companion') {
       discardManualSession();
       // The panel was placed for the selection; move it to the field now being written in.
       placePanel(fieldRectDip(snapshot));
       logPanelZ('manual-to-live');
     }
-    if (!panel.visible || panel.mode !== 'companion') {
+    const inlineReview = state.suggestionStyle === 'inline' && panel.mode !== 'manual';
+    if (!inlineReview && (!panel.visible || panel.mode !== 'companion')) {
       logMonitorStage(`held:${snapshot.key}`, `edit not shown (app=${processName}, mode=${panel.mode}, dismissedField=${panel.dismissedKey === snapshot.key})`);
     } else {
-      logMonitorStage(`writing:${snapshot.key}`, `writing detected; panel showing (app=${processName}, pinned=${panel.pinned})`);
+      logMonitorStage(`writing:${snapshot.key}`, `writing detected; ${inlineReview && !panel.visible ? 'inline' : 'panel showing'} (app=${processName}, pinned=${panel.pinned})`);
       const revision = monitorSession.revision;
       reviewDebouncer.schedule(() => { void runMonitorReview(revision); });
     }
@@ -1177,12 +1336,34 @@ async function applyMonitorSuggestion() {
 // Rich editors: apply only the chosen fixes, each located by its surrounding text and verified
 // by the helper before pasting, so the rest of the document is never replaced.
 async function applyFixesInDocument() {
-  const snapshot = monitorSession.snapshot;
   const suggestion = monitorSession.suggestion;
   if (monitorEditedResult?.revision === monitorSession.revision) throw new Error('An edited suggestion can only be copied in this app. Use Copy.');
   if (!suggestion || !hasEdits(suggestion.findings)) throw new Error('This suggestion can only be copied in this app. Use Copy.');
+  await applySpans(monitorSession.text, suggestion.findings);
+}
+
+// Applies the chosen options of `findings` to the field: only the changed words where the editor
+// supports it, otherwise (a plain field) by replacing the field's text after verification.
+async function applyFindings(text, findings) {
+  const snapshot = monitorSession.snapshot;
+  const composed = composeText(text, findings);
+  if (composed === text) return;
+  if (snapshot?.runtimeId && ['text', 'value'].includes(snapshot.reader)) {
+    try { await applySpans(text, findings); return; }
+    catch (error) {
+      // Nothing changed in the field, so replacing the whole (verified) field text is still safe.
+      if (!snapshot.replaceSupported || !error.nothingApplied) throw error;
+      startup(`in-place apply fell back to field replace (${error.message})`);
+    }
+  }
+  if (!snapshot?.replaceSupported) throw new Error('This app does not allow ClearWrite to change the text. Use Copy in the ClearWrite panel.');
+  await writeToMonitoredField('apply', composed, text);
+}
+
+async function applySpans(text, findings) {
+  const snapshot = monitorSession.snapshot;
   if (pendingWrite) throw new Error('ClearWrite is already updating this field.');
-  const text = monitorSession.text;
+  const suggestion = { findings };
   const spans = spansForEdits(text, chosenEdits(text, suggestion.findings));
   if (!spans.length) throw new Error('Choose at least one change to apply.');
   cancelReviewWork();
@@ -1193,9 +1374,11 @@ async function applyFixesInDocument() {
     startup(`in-place apply (applied=${result.applied}, total=${result.total})`);
     if (result.applied !== result.total) {
       const reason = result.problem ? `${result.problem} ` : '';
-      throw new Error(result.applied
+      const failure = new Error(result.applied
         ? `Applied ${result.applied} of ${result.total} changes. ${reason}Copy the rest instead.`
         : `${reason}Nothing was changed. Use Copy instead.`);
+      failure.nothingApplied = result.applied === 0;
+      throw failure;
     }
     completePendingWrite();
   } catch (error) {
@@ -1781,11 +1964,22 @@ handle('app:set-proofreading-mode', setProofreadingMode);
 handle('app:set-dialect', setEnglishDialect);
 handle('app:set-ai-scope', setAiReviewScope);
 handle('app:set-underlines', setShowUnderlines);
-handle('underlines:hover', (active) => {
+handle('underlines:hover', (index) => {
+  const active = Number.isSafeInteger(index) && index >= 0;
   // Only a visible overlay may take clicks, and only while the pointer is over an underline.
-  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.setIgnoreMouseEvents(!(active === true && underlineWindow.isVisible()), { forward: true });
+  if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.setIgnoreMouseEvents(!(active && underlineWindow.isVisible()), { forward: true });
+  hoverUnderline(active ? index : -1);
 });
 handle('underlines:open', openUnderline);
+handle('badge:click', () => openFullPanel());
+handle('card:apply', (index, option) => applyOneFinding(index, option));
+handle('card:ignore', (index) => ignoreOneFinding(index));
+handle('card:add-word', async (word) => { hideCard(); await addDictionaryWord(word); });
+handle('card:open-panel', (index) => openFullPanel(index));
+handle('card:close', () => hideCard());
+handle('card:hover', (inside) => { cardHovered = inside === true; if (!cardHovered) scheduleCardHide(); else clearTimeout(cardHideTimer); });
+handle('card:resize', (height) => resizeCard(height));
+handle('app:set-suggestion-style', setSuggestionStyle);
 handle('dictionary:list', () => personalDictionary.list());
 handle('learning:remove', async (from, to) => { await learningMemory.remove(from, to); state.learnedPatterns = learningMemory.list(); publishState(); });
 handle('learning:clear', async () => { await learningMemory.clear(); state.learnedPatterns = []; publishState(); });
@@ -1879,6 +2073,7 @@ async function loadPreferences() {
     if (raw.provider === 'chatgpt' || raw.provider === 'gemini') state.provider = raw.provider;
     if (raw.aiReviewScope === 'all' || raw.aiReviewScope === 'unsure') state.aiReviewScope = raw.aiReviewScope;
     if (typeof raw.showUnderlines === 'boolean') state.showUnderlines = raw.showUnderlines;
+    if (raw.suggestionStyle === 'inline' || raw.suggestionStyle === 'panel') state.suggestionStyle = raw.suggestionStyle;
     if (raw.selectedModels && typeof raw.selectedModels === 'object') {
       for (const provider of ['chatgpt', 'gemini']) {
         if (typeof raw.selectedModels[provider] === 'string' && raw.selectedModels[provider].length <= 120) selectedModels[provider] = raw.selectedModels[provider];
@@ -1936,6 +2131,8 @@ async function writePreferences() {
     englishDialect: state.englishDialect,
     aiReviewScope: state.aiReviewScope,
     showUnderlines: state.showUnderlines,
+    suggestionStyle: state.suggestionStyle,
+    suggestionStyle: state.suggestionStyle,
     privacyDefaultsVersion: 1,
   };
   try { await writeFile(temporary, JSON.stringify(contents, null, 2), { flag: 'wx' }); await rename(temporary, file); }
@@ -2055,6 +2252,7 @@ app.on('before-quit', () => {
   stopWindowsInput();
   hideUnderlines();
   if (underlineWindow && !underlineWindow.isDestroyed()) underlineWindow.destroy();
+  for (const win of [badgeWindow, cardWindow]) if (win && !win.isDestroyed()) win.destroy();
   globalShortcut.unregisterAll();
   tray?.destroy();
   chatgpt.cancelSignIn();

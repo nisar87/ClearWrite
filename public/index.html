@@ -45,11 +45,15 @@
         <section class="settings-block focus-monitor-block">
           <div class="settings-heading"><div><span class="eyebrow">ACTIVE FIELD MONITOR</span><h2 id="monitor-heading">Monitoring is paused</h2><p id="monitor-status" role="status">Monitoring paused</p></div><button class="secondary" id="monitor-toggle" aria-pressed="false">Resume monitoring</button></div>
           <div class="monitor-details"><span class="connection-indicator" id="monitor-indicator"></span><span id="monitor-privacy">Only editable fields with a detected text change can trigger a suggestion. Password fields, read-only documents, and excluded apps are ignored. When the allowlist is on, other apps are checked by process name before their text is read.</span></div>
+          <div class="mode-options" role="radiogroup" aria-label="How suggestions appear" id="suggestion-style">
+            <label class="mode-option"><input type="radio" name="suggestion-style" value="inline"><span><b>Inline, like Grammarly</b><small>Mistakes are underlined in your text. Hover or click one for a card with the fix; a small widget in the corner of the field shows the count and opens the full panel.</small></span></label>
+            <label class="mode-option"><input type="radio" name="suggestion-style" value="panel"><span><b>Panel</b><small>The ClearWrite panel opens next to the field while you write.</small></span></label>
+          </div>
           <label class="setting-toggle"><input id="underlines-toggle" type="checkbox"><span>Underline mistakes in the text (in editors that report word positions); click an underline to review it</span></label>
           <div class="monitor-app-row"><span>Last external app: <strong id="monitor-current-app">Not detected</strong></span><button class="text-button" id="allow-current-app" disabled>Add this app to allowlist</button></div>
           <div class="monitor-pause-actions"><button class="secondary" id="pause-monitor-hour">Pause for 1 hour</button><button class="secondary" id="pause-monitor-tomorrow">Pause until tomorrow</button></div>
         </section>
-        <p class="live-privacy">Suggestions appear in a small panel near your writing. Review them, then choose Apply or Copy. ClearWrite does not read surrounding chat messages.</p>
+        <p class="live-privacy">Suggestions appear as underlines and cards in your text, or in a small panel near your writing, depending on the setting above. ClearWrite does not read surrounding chat messages.</p>
       </section>
       <section class="content hidden" id="home-page">
         <div class="page-title"><div class="eyebrow">DESKTOP ASSISTANT</div><h1>Write with more confidence.</h1><p>Improve a draft in the app where you’re already writing.</p></div>

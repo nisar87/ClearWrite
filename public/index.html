@@ -31,6 +31,13 @@
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5"/><path d="M5 19.5h14"/></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
       <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+      <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></symbol>
+      <symbol id="i-percent" viewBox="0 0 24 24"><path d="M18 6 6 18"/><circle cx="7.5" cy="7.5" r="2"/><circle cx="16.5" cy="16.5" r="2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></symbol>
     </defs>
   </svg>
@@ -41,6 +48,7 @@
       <div class="rail-label">WORKSPACE</div>
       <nav aria-label="Main navigation">
         <button class="nav-item active" data-page="live"><svg class="icon"><use href="#i-home"/></svg><span>Home</span></button>
+        <button class="nav-item" data-page="history"><svg class="icon"><use href="#i-clock"/></svg><span>History</span><span class="nav-count hidden" id="nav-history-count"></span></button>
         <button class="nav-item" data-page="settings"><svg class="icon"><use href="#i-settings"/></svg><span>Settings</span></button>
       </nav>
       <div class="rail-bottom">
@@ -69,9 +77,28 @@
 
         <div class="tiles">
           <div class="tile tile-accent"><div class="tile-top"><span>Checking</span><svg class="icon"><use href="#i-power"/></svg></div><div class="tile-value" id="monitor-heading">Paused</div><div class="tile-detail"><span class="connection-indicator" id="monitor-indicator"></span><span id="monitor-current-app">Not detected</span></div></div>
-          <div class="tile"><div class="tile-top"><span>Checked by</span><svg class="icon"><use href="#i-shield"/></svg></div><div class="tile-value" id="tile-mode">This PC</div><div class="tile-detail" id="tile-mode-detail">Nothing is sent anywhere</div></div>
-          <div class="tile"><div class="tile-top"><span>Learned corrections</span><svg class="icon"><use href="#i-learn"/></svg></div><div class="tile-value" id="tile-learned">0</div><div class="tile-detail">From the fixes you accept</div></div>
-          <div class="tile"><div class="tile-top"><span>Your dictionary</span><svg class="icon"><use href="#i-book"/></svg></div><div class="tile-value" id="tile-words">0</div><div class="tile-detail">Words never flagged</div></div>
+          <div class="tile"><div class="tile-top"><span>Fixed today</span><svg class="icon"><use href="#i-check"/></svg></div><div class="tile-value" id="tile-fixed">0</div><div class="tile-detail" id="tile-fixed-detail">No mistakes found yet</div></div>
+          <div class="tile"><div class="tile-top"><span>Words checked today</span><svg class="icon"><use href="#i-text"/></svg></div><div class="tile-value" id="tile-words">0</div><div class="tile-detail" id="tile-words-detail">In every app you write in</div></div>
+          <div class="tile"><div class="tile-top"><span>Fixes accepted</span><svg class="icon"><use href="#i-percent"/></svg></div><div class="tile-value" id="tile-accept">–</div><div class="tile-detail" id="tile-accept-detail">Last 30 days</div></div>
+        </div>
+
+        <section class="card chart-card" aria-labelledby="chart-heading">
+          <div class="card-head"><div><h2 id="chart-heading">Last 30 days</h2><p id="chart-summary">Mistakes found and fixed each day.</p></div><div class="legend"><span><i class="swatch swatch-found"></i>Found</span><span><i class="swatch swatch-fixed"></i>Fixed</span></div></div>
+          <div class="chart" id="chart" role="img" aria-label="Mistakes found and fixed per day"></div>
+          <details class="chart-table"><summary>View as a table</summary><table><thead><tr><th>Day</th><th>Words checked</th><th>Found</th><th>Fixed</th><th>Dismissed</th></tr></thead><tbody id="chart-table-body"></tbody></table></details>
+        </section>
+
+        <div class="card-row">
+          <section class="card">
+            <div class="card-head"><div><h2>Recent corrections</h2><p>The last fixes you made</p></div><button class="text-button" data-goto="history">See all <svg class="icon small"><use href="#i-arrow"/></svg></button></div>
+            <ul class="change-list" id="recent-list"></ul>
+            <p class="empty-note" id="recent-empty">Fixes you apply or copy appear here.</p>
+          </section>
+          <section class="card">
+            <div class="card-head"><div><h2>Your most common mistakes</h2><p>Last 90 days</p></div></div>
+            <ol class="top-list" id="top-list"></ol>
+            <p class="empty-note" id="top-empty">Nothing yet. Keep writing and this fills in.</p>
+          </section>
         </div>
 
         <section class="card" aria-labelledby="mode-heading">
@@ -106,6 +133,19 @@
           </section>
         </div>
         <p class="status-message" id="notice" role="status"></p>
+      </section>
+
+      <!-- History -->
+      <section class="content hidden" id="history-page">
+        <div class="toolbar">
+          <label class="search"><svg class="icon"><use href="#i-search"/></svg><input id="history-search" type="search" placeholder="Search corrections" aria-label="Search corrections" spellcheck="false"></label>
+          <span class="toolbar-note" id="history-count"></span>
+          <label class="inline-switch"><span>Keep history</span><input class="switch" id="history-toggle" type="checkbox"></label>
+          <button class="secondary" id="history-clear"><svg class="icon"><use href="#i-trash"/></svg>Clear</button>
+        </div>
+        <div class="history-list" id="history-list"></div>
+        <div class="empty-state card" id="history-empty"><svg class="icon big"><use href="#i-clock"/></svg><h2 id="history-empty-title">No corrections yet</h2><p id="history-empty-detail">When you apply or copy a fix, it is listed here with a few words around it, so you can check what changed. History stays on this PC and is deleted after 90 days.</p></div>
+        <p class="status-message" id="history-notice" role="status"></p>
       </section>
 
       <!-- Settings -->
@@ -166,6 +206,9 @@
             <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-block"/></svg></span><div><h2>Excluded apps</h2><p>ClearWrite never reads text in these apps.</p></div></div>
             <div class="input-row"><input id="excluded-apps-input" class="mono" aria-label="Excluded apps" placeholder="myapp, keepass"><button class="secondary" id="excluded-apps-save">Save</button></div>
             <small class="hint">ClearWrite, Command Prompt, PowerShell, Windows Terminal and Registry Editor are always excluded.</small>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-clock"/></svg></span><div><h2>Writing stats and history</h2><p>Counts of words checked and mistakes fixed, and a 90-day history of your corrections with a few words around each. Turn history off or clear it on the History page.</p></div><button class="secondary" id="stats-reset">Reset stats</button></div>
           </section>
           <section class="card storage-block">
             <div class="card-head"><span class="card-icon"><svg class="icon"><use href="#i-lock"/></svg></span><div><h2>Your data stays on this PC</h2><p>Preferences, your dictionary, learned corrections and encrypted keys are kept in your local ClearWrite folder. Nothing you write is logged.</p></div></div>

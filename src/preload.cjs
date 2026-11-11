@@ -67,6 +67,11 @@ contextBridge.exposeInMainWorld('clearWrite', {
   cardResize: (height) => ipcRenderer.invoke('card:resize', height),
   setSuggestionStyle: (style) => ipcRenderer.invoke('app:set-suggestion-style', style),
   setTheme: (theme) => ipcRenderer.invoke('app:set-theme', theme),
+  setHistoryEnabled: (enabled) => ipcRenderer.invoke('stats:set-history', enabled),
+  clearHistory: () => ipcRenderer.invoke('stats:clear-history'),
+  removeHistoryEntry: (id) => ipcRenderer.invoke('stats:remove', id),
+  resetStats: () => ipcRenderer.invoke('stats:reset'),
+  copyHistoryEntry: (id, which) => ipcRenderer.invoke('stats:copy', id, which),
   onBadge: (callback) => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('badge:state', listener);

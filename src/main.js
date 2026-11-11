@@ -13,6 +13,7 @@ import { configureLocalProofreader, proofreadLocally, stopLocalProofreader } fro
 import { actionRequiresAi, createProofreadingRouter, ENGLISH_DIALECTS, migrateProofreadingPreferences, normalizeEnglishDialect, normalizeProofreadingMode, OfflineModeError } from './proofreading-mode.js';
 import { createPersonalDictionary } from './personal-dictionary.js';
 import { applyLearning, createLearningMemory } from './learning-memory.js';
+import { createWritingStats } from './writing-stats.js';
 import { clarityHints } from './clarity-hints.js';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -142,6 +143,7 @@ const dictionaryDir = process.env.CLEARWRITE_DICTIONARY_DIR || path.join(app.get
 const personalDictionary = createPersonalDictionary(dictionaryDir);
 // Personal learning: stored next to the dictionary, on this device only (learning-memory.js).
 const learningMemory = createLearningMemory(dictionaryDir);
+const writingStats = createWritingStats(dictionaryDir);
 
 // ChatGPT sign-in comes from the optional Sign in with ChatGPT DevKit (@siwc/local). It is
 // loaded lazily so ClearWrite installs and runs without it: Offline only and Gemini work, and
@@ -1123,8 +1125,23 @@ function withLearning(text, suggestion) {
 }
 
 // The writer committed a suggestion (Apply, Replace or Copy): remember their decisions.
+// A check finished: count the words and the mistakes found (once per field and day).
+function noteReview(text, suggestion) {
+  try { writingStats.review(monitorSession.key, text, suggestion?.findings || []); }
+  catch { return; }
+  publishStatsSoon();
+}
+
+let statsPublishTimer;
+function publishStatsSoon() {
+  clearTimeout(statsPublishTimer);
+  statsPublishTimer = setTimeout(() => { state.stats = writingStats.summary(); publishState(); }, 500);
+}
+
 function learnFrom(text, findings, edited = false) {
   if (edited || !hasEdits(findings)) return;
+  const app = panel.mode === 'manual' ? '' : monitorSession.processName || '';
+  void writingStats.decide(text, findings, { app }).then((changed) => { if (changed) publishStatsSoon(); }).catch(() => {});
   void learningMemory.record(text, findings).then((changed) => {
     if (changed) { state.learnedPatterns = learningMemory.list(); publishState(); }
   }).catch(() => { /* Learning is optional; a write failure never blocks the user. */ });
@@ -1201,6 +1218,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
   const cached = force ? undefined : reviewCache.get(key, text);
   if (cached?.providerKey === providerKey) {
     monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: withLearning(text, cached.suggestion) });
+    noteReview(text, cached.suggestion);
     publishAssistantView();
     dispatchPanel({ type: 'result' });
     return;
@@ -1268,6 +1286,7 @@ async function runMonitorReview(revision, { force = false, localOnly = false } =
   } else {
     if (cacheable) reviewCache.set(key, text, { providerKey, suggestion });
     monitorSession = transitionMonitorSession(monitorSession, { type: 'suggestion', revision, suggestion: withLearning(text, suggestion) });
+    noteReview(text, suggestion);
     startup(`monitor review completed (mode=${state.proofreadingMode}, source=${suggestion.source}, latencyMs=${latency}, changed=${suggestion.text !== text})`);
   }
   publishAssistantView();
@@ -1982,6 +2001,16 @@ handle('card:close', () => hideCard());
 handle('card:hover', (inside) => { cardHovered = inside === true; if (!cardHovered) scheduleCardHide(); else clearTimeout(cardHideTimer); });
 handle('card:resize', (height) => resizeCard(height));
 handle('app:set-suggestion-style', setSuggestionStyle);
+handle('stats:set-history', async (enabled) => { await writingStats.setHistoryEnabled(enabled === true); state.stats = writingStats.summary(); publishState(); });
+handle('stats:clear-history', async () => { await writingStats.clearHistory(); state.stats = writingStats.summary(); publishState(); });
+handle('stats:remove', async (id) => { await writingStats.removeEntry(String(id)); state.stats = writingStats.summary(); publishState(); });
+handle('stats:reset', async () => { await writingStats.resetStats(); state.stats = writingStats.summary(); publishState(); });
+handle('stats:copy', (id, which) => {
+  const entry = writingStats.entry(String(id));
+  if (!entry) throw new Error('This correction is no longer in your history.');
+  const word = which === 'before' ? entry.from : entry.to;
+  clipboard.writeText(`${entry.lead.replace(/^…/, '')}${word}${entry.tail.replace(/…$/, '')}`.trim());
+});
 handle('app:set-theme', async (value) => {
   if (!['system', 'light', 'dark'].includes(value)) throw new Error('Choose System, Light or Dark.');
   state.theme = value;
@@ -2218,6 +2247,8 @@ else {
     state.dictionaryLocation = personalDictionary.file;
     try { state.learnedPatterns = await learningMemory.load(); }
     catch (error) { state.notice = error.message; state.learnedPatterns = []; }
+    try { state.stats = await writingStats.load(); }
+    catch { state.stats = writingStats.summary(); }
     applyLocalCheckerConfig();
     // A real sentence, so Harper, the context model and the grammar model all load now rather
     // than during the writer's first check.
@@ -2250,6 +2281,7 @@ else {
 
 app.on('before-quit', () => {
   quitting = true;
+  void writingStats.flush().catch(() => {});
   updates?.dispose();
   clearTimeout(monitorResumeTimer);
   clearTimeout(focusMonitorRestartTimer);

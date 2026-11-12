@@ -49,11 +49,14 @@ function renderDiff(original, corrected, left, right) {
   }
   while (i < a.length) add('removed', a[i++]);
   while (j < b.length) add('added', b[j++]);
+  // A word replaced by another is one change, not a removal plus an addition.
   let changes = 0;
+  let replacing = false;
   for (const op of ops) {
-    if (op.kind === 'same') { left.append(op.text); right.append(op.text); continue; }
+    if (op.kind === 'same') { left.append(op.text); right.append(op.text); replacing = false; continue; }
     if (!op.text.trim()) { (op.kind === 'removed' ? left : right).append(op.text); continue; }
-    changes += 1;
+    if (!(op.kind === 'added' && replacing)) changes += 1;
+    replacing = op.kind === 'removed';
     const mark = document.createElement(op.kind === 'removed' ? 'del' : 'ins');
     mark.className = op.kind === 'removed' ? 'diff-removed' : 'diff-added';
     mark.textContent = op.text;

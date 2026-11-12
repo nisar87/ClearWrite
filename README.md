@@ -2,6 +2,23 @@
 
 ClearWrite is a Windows desktop writing assistant. It checks spelling and basic grammar while you write, **on your device by default**: no account, API key, or internet connection is needed. AI-assisted correction and AI rewrites (Gemini or ChatGPT) are optional and only used after you opt in.
 
+## Screenshots
+
+Home shows today's fixes, words checked and a 30-day chart (sample data):
+
+![ClearWrite Home in the light theme](docs/screenshots/home-light.png)
+
+| While you write | Side panel |
+| --- | --- |
+| ![Suggestion card under a misspelled word](docs/screenshots/suggestion-card-light.png) | ![ClearWrite side panel with two suggestions](docs/screenshots/panel-light.png) |
+| Hover or click an underline for a card; one click applies the fix. | The full review, opened from the corner widget or the shortcut. |
+
+| History (dark theme) | Settings, grouped into tabs |
+| --- | --- |
+| ![History page listing corrections by day](docs/screenshots/history-dark.png) | ![Settings, General tab](docs/screenshots/settings-general-light.png) |
+
+More: [Home in dark](docs/screenshots/home-dark.png) · [Appearance and updates](docs/screenshots/settings-appearance-dark.png) · [Side panel in dark](docs/screenshots/panel-dark.png) · [Card in dark](docs/screenshots/suggestion-card-dark.png)
+
 ## Features
 
 - **Live writing monitor:** off by default. When enabled, the compact panel appears the first time you actually edit proofreadable text in an editable field (focusing a field, reading, or selecting does not open it). Review waits until you pause typing. Browser address bars, URL-only input, and text without enough sentence-like content are ignored. Links inside prose are shielded during correction and restored exactly afterward. Read-only documents, password fields, and excluded apps are ignored.
@@ -161,6 +178,8 @@ The reader supports capability-based ValuePattern, guarded rich TextPattern, foc
 The Windows monitor relies on UI Automation and works only with text fields that expose usable accessibility information. Some apps, remote sessions, protected/elevated windows, and custom editors may not expose text reliably. Manual selection uses the system clipboard and keyboard input, so apps that block clipboard access may not support replacement. In those cases, copy the suggestion and paste it yourself.
 
 ## Development
+
+Screenshots in `docs/screenshots` are made with sample data by `python scripts/screenshots/capture.py` (needs Python Playwright and Chrome); rerun it after changing the interface.
 
 Build the Windows installer and ZIP on Windows with Node.js 22.12+:
 

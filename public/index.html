@@ -38,6 +38,13 @@
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
       <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4.5h5.5V10M19.5 4.5 11 13"/><path d="M18 14v4.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1H10"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4"/></symbol>
+      <symbol id="i-bug" viewBox="0 0 24 24"><rect x="7.5" y="8" width="9" height="11.5" rx="4.5"/><path d="M9.5 8V6.5a2.5 2.5 0 0 1 5 0V8M4.5 13h3M16.5 13h3M5 8.5l2.5 1.5M19 8.5 16.5 10M5 18l2.5-1.5M19 18l-2.5-1.5"/></symbol>
+      <symbol id="i-network" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="2"/><circle cx="18.5" cy="6" r="2"/><circle cx="18.5" cy="18" r="2"/><path d="M7.4 11.2 16.6 6.8M7.4 12.8l9.2 4.4"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 17.5h2"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></symbol>
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></symbol>
     </defs>
   </svg>
@@ -156,6 +163,7 @@
           <button class="tab" role="tab" data-tab="privacy" aria-selected="false">Privacy</button>
           <button class="tab" role="tab" data-tab="ai" aria-selected="false">AI</button>
           <button class="tab" role="tab" data-tab="appearance" aria-selected="false">Appearance &amp; updates</button>
+          <button class="tab" role="tab" data-tab="about" aria-selected="false">About</button>
         </div>
 
         <div class="tab-panel" data-panel="general" role="tabpanel">
@@ -263,6 +271,37 @@
               <button class="text-button" id="update-releases">Release notes</button>
             </div>
             <label class="setting-row"><span><b>Check for updates automatically</b><small id="update-privacy">At startup and every six hours. No writing is sent. Installing always asks first.</small></span><input class="switch" id="automatic-updates" type="checkbox"></label>
+          </section>
+        </div>
+        <div class="tab-panel hidden" data-panel="about" role="tabpanel">
+          <section class="card about-hero">
+            <span class="brand-mark big"><svg><use href="#i-logo"/></svg></span>
+            <div>
+              <h2>ClearWrite</h2>
+              <p class="about-version" id="about-version">Version</p>
+              <p>A writing assistant for Windows that checks spelling and grammar on your PC, in every app you write in.</p>
+            </div>
+            <button class="primary" type="button" data-link="clearwrite"><svg class="icon"><use href="#i-external"/></svg>ClearWrite website</button>
+          </section>
+          <section class="card">
+            <div class="card-head"><span class="card-icon author-mark">N</span><div><h2>Made by Nisar Ahmad</h2><p>Software by Nisarworks. “I build the tools I wish already existed.”</p></div><button class="secondary" type="button" data-link="nisarworks"><svg class="icon"><use href="#i-external"/></svg>nisarworks.com</button></div>
+            <div class="link-grid">
+              <button class="link-tile" type="button" data-link="source"><svg class="icon"><use href="#i-code"/></svg><span><b>Source code</b><small>github.com/nisar87/ClearWrite</small></span></button>
+              <button class="link-tile" type="button" data-link="issues"><svg class="icon"><use href="#i-bug"/></svg><span><b>Report a problem</b><small>Opens a new issue on GitHub</small></span></button>
+              <button class="link-tile" type="button" data-link="about"><svg class="icon"><use href="#i-globe"/></svg><span><b>About the author</b><small>nisarworks.com/about</small></span></button>
+              <button class="link-tile" type="button" data-link="notices"><svg class="icon"><use href="#i-book"/></svg><span><b>Third-party notices</b><small>Open-source software ClearWrite uses</small></span></button>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head"><div><h2>More from Nisarworks</h2><p>Other tools by the same author.</p></div><button class="text-button" type="button" data-link="products">All products <svg class="icon small"><use href="#i-arrow"/></svg></button></div>
+            <div class="product-list">
+              <button class="product-row" type="button" data-link="netmerge"><span class="row-icon"><svg class="icon"><use href="#i-network"/></svg></span><span><b>NetMerge <em>Windows 11</em></b><small>Combines cable, Wi-Fi and hotspot so apps that open many connections run faster.</small></span><svg class="icon chevron"><use href="#i-arrow"/></svg></button>
+              <button class="product-row" type="button" data-link="netmerge-android"><span class="row-icon"><svg class="icon"><use href="#i-phone"/></svg></span><span><b>NetMerge for Android <em>Testing</em></b><small>Sends your phone's traffic over Wi-Fi and mobile data together.</small></span><svg class="icon chevron"><use href="#i-arrow"/></svg></button>
+              <button class="product-row" type="button" data-link="pullwell"><span class="row-icon"><svg class="icon"><use href="#i-download"/></svg></span><span><b>Pullwell <em>Early release</em></b><small>A download manager that resumes after crashes and checks finished files. No telemetry.</small></span><svg class="icon chevron"><use href="#i-arrow"/></svg></button>
+              <button class="product-row" type="button" data-link="ai-cv-studio"><span class="row-icon"><svg class="icon"><use href="#i-file"/></svg></span><span><b>AI CV Studio <em>Live</em></b><small>Turns your CV into an editable, downloadable PDF.</small></span><svg class="icon chevron"><use href="#i-arrow"/></svg></button>
+              <button class="product-row" type="button" data-link="vox"><span class="row-icon"><svg class="icon"><use href="#i-mic"/></svg></span><span><b>Vox <em>Early release</em></b><small>Voice control for your PC.</small></span><svg class="icon chevron"><use href="#i-arrow"/></svg></button>
+            </div>
+            <small class="hint">Links open in your web browser. ClearWrite does not contact these sites by itself.</small>
           </section>
         </div>
         <p class="status-message" id="settings-notice" role="status"></p>

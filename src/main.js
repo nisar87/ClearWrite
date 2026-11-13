@@ -1949,6 +1949,27 @@ handle('updates:download', () => updates?.download());
 handle('updates:cancel', () => updates?.cancel());
 handle('updates:install', () => updates?.install());
 handle('updates:releases', () => shell.openExternal('https://github.com/nisar87/ClearWrite/releases'));
+// Links on the About tab. The window names a link; only these addresses can be opened.
+const ABOUT_LINKS = {
+  clearwrite: 'https://nisarworks.com/products/clearwrite/',
+  nisarworks: 'https://nisarworks.com/',
+  about: 'https://nisarworks.com/about/',
+  products: 'https://nisarworks.com/products/',
+  github: 'https://github.com/nisar87',
+  source: 'https://github.com/nisar87/ClearWrite',
+  issues: 'https://github.com/nisar87/ClearWrite/issues/new',
+  notices: 'https://github.com/nisar87/ClearWrite/blob/main/THIRD_PARTY_NOTICES.md',
+  netmerge: 'https://nisarworks.com/products/netmerge/',
+  'netmerge-android': 'https://nisarworks.com/products/netmerge-android/',
+  pullwell: 'https://nisarworks.com/products/pullwell/',
+  'ai-cv-studio': 'https://nisarworks.com/products/ai-cv-studio/',
+  vox: 'https://nisarworks.com/products/vox/',
+};
+handle('app:open-link', (name) => {
+  const url = Object.hasOwn(ABOUT_LINKS, name) ? ABOUT_LINKS[name] : null;
+  if (!url) throw new Error('That link is not available.');
+  return shell.openExternal(url);
+});
 handle('updates:automatic', async (value) => {
   if (typeof value !== 'boolean') throw new Error('Choose whether to check for updates automatically.');
   state.automaticUpdates = value;

@@ -36,3 +36,13 @@ test('every settings tab has a panel', () => {
   const panels = [...html.matchAll(/data-panel="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(tabs, panels);
 });
+
+test('every About link names an address the main process allows', () => {
+  const main = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  const block = main.slice(main.indexOf('const ABOUT_LINKS = {'), main.indexOf('};', main.indexOf('const ABOUT_LINKS = {')));
+  const allowed = new Set([...block.matchAll(/^\s+'?([a-z-]+)'?: 'https:\/\/[^']+',$/gm)].map((match) => match[1]));
+  const used = [...read('index.html').matchAll(/data-link="([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(used.length >= 10);
+  assert.deepEqual(used.filter((name) => !allowed.has(name)), []);
+  for (const url of block.matchAll(/'(https:\/\/[^']+)'/g)) assert.match(url[1], /^https:\/\/(nisarworks\.com\/|github\.com\/nisar87(\/|$))/);
+});

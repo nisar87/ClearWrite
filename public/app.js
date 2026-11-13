@@ -129,6 +129,7 @@ function renderUpdates(state) {
     installing: 'Installing update. ClearWrite will restart.', error: update.error || 'The update could not be completed. Try again.',
   };
   $('update-version').textContent = `Installed version: ${update.currentVersion || ''}`;
+  $('about-version').textContent = update.currentVersion ? `Version ${update.currentVersion}` : 'Version unknown';
   document.querySelector('.footer-version').textContent = update.currentVersion || '';
   $('update-status').textContent = messages[status] || messages.idle;
   $('update-check').disabled = !update.supported || ['checking', 'downloading', 'downloaded', 'installing'].includes(status);
@@ -294,7 +295,7 @@ $('dictionary-input').addEventListener('keydown', (event) => { if (event.key ===
 const PAGES = {
   live: { title: 'Home', subtitle: 'Spelling and grammar help in every app you write in.' },
   history: { title: 'History', subtitle: 'Corrections you made in the last 90 days, kept only on this PC.' },
-  settings: { title: 'Settings', subtitle: 'Suggestions, writing, privacy, AI and updates.' },
+  settings: { title: 'Settings', subtitle: 'Suggestions, writing, privacy, AI, updates and about.' },
 };
 function showTab(name) {
   document.querySelectorAll('.tab').forEach((tab) => {
@@ -687,3 +688,8 @@ $('stats-reset').addEventListener('click', async () => {
   try { await requireApi('resetStats')(); showNotice('Writing stats reset.', true); }
   catch (error) { showNotice(error.message, true); }
 });
+
+document.querySelectorAll('[data-link]').forEach((button) => button.addEventListener('click', async () => {
+  try { await requireApi('openLink')(button.dataset.link); }
+  catch (error) { showNotice(error.message, true); }
+}));

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('clearWrite', {
   installUpdate: () => ipcRenderer.invoke('updates:install'),
   setAutomaticUpdates: (value) => ipcRenderer.invoke('updates:automatic', value),
   openReleases: () => ipcRenderer.invoke('updates:releases'),
+  openLink: (name) => ipcRenderer.invoke('app:open-link', name),
   onOpenUpdates: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('app:open-updates', listener);
